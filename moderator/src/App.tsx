@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   LogIn, Upload, RefreshCw, CheckCircle, Users,
   Save, Plus, ChevronDown, ChevronRight, MessageSquare, BarChart2, Trash2,
+  LayoutList, LayoutGrid,
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import type { Session, L1Note, T2Coding, T2Group, T3Group, T3Item, T3Final } from '@shared/types';
@@ -80,6 +81,150 @@ function ConsensusBadge({ score, total }: { score: number; total: number }) {
     <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium', color)}>
       <Users size={10} /> {count}/{total} · {pct}%
     </span>
+  );
+}
+
+// ─── Consensus Grid (Grup × AltMod matrix) ───────────────────────────────────
+
+function scoreColor(score: number): string {
+  if (score >= 0.8) return 'bg-green-500';
+  if (score >= 0.6) return 'bg-emerald-400';
+  if (score >= 0.4) return 'bg-amber-400';
+  if (score > 0)    return 'bg-rose-400';
+  return 'bg-gray-100';
+}
+
+function scoreBg(score: number): string {
+  if (score >= 0.8) return 'bg-green-50 border-green-200';
+  if (score >= 0.6) return 'bg-emerald-50 border-emerald-200';
+  if (score >= 0.4) return 'bg-amber-50 border-amber-200';
+  if (score > 0)    return 'bg-rose-50 border-rose-200';
+  return 'bg-gray-50 border-gray-200';
+}
+
+function ConsensusGrid({ groups, codings }: { groups: T3Group[]; codings: T2Coding[] }) {
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const subMods = codings.map(c => c.subModName);
+  const total = codings.length;
+
+  if (total === 0 || groups.length === 0) return null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      {/* Legend */}
+      <div className="flex items-center gap-4 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-500 flex-wrap">
+        <span className="font-medium">Consensus:</span>
+        {[['≥80%', 'bg-green-500'], ['60-79%', 'bg-emerald-400'], ['40-59%', 'bg-amber-400'], ['<40%', 'bg-rose-400'], ['Yok', 'bg-gray-200']].map(([label, cls]) => (
+          <span key={label} className="flex items-center gap-1"><span className={`w-3 h-3 rounded-sm inline-block ${cls}`} />{label}</span>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="bg-gray-50">
+              <th className="text-left px-4 py-2 font-semibold text-gray-700 border-b border-r border-gray-200 min-w-[200px] sticky left-0 bg-gray-50 z-10">
+                Grup
+              </th>
+              <th className="px-3 py-2 font-semibold text-gray-700 border-b border-r border-gray-200 text-center min-w-[80px]">
+                Consensus
+              </th>
+              {subMods.map(sm => (
+                <th key={sm} className="px-3 py-2 font-medium text-gray-600 border-b border-r border-gray-200 text-center min-w-[90px] last:border-r-0">
+                  <span className="block truncate max-w-[80px] mx-auto" title={sm}>{sm}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((group, i) => {
+              const isExpanded = expandedGroup === group.id;
+              const pct = Math.round(group.consensusScore * 100);
+
+              return (
+                <>
+                  <tr
+                    key={group.id}
+                    className={cn('border-b border-gray-100 cursor-pointer hover:bg-violet-50 transition-colors', i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50')}
+                    onClick={() => setExpandedGroup(isExpanded ? null : group.id)}
+                  >
+                    {/* Group name */}
+                    <td className={cn('px-4 py-2.5 border-r border-gray-200 sticky left-0 z-10', i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50')}>
+                      <div className="flex items-center gap-2">
+                        <div className={cn('w-1 h-8 rounded-full shrink-0', scoreColor(group.consensusScore))} />
+                        <div className="min-w-0">
+                          <div className="font-medium text-gray-900 leading-tight truncate">{group.name}</div>
+                          <div className="text-xs text-gray-400">{group.category} · {group.items.length} madde</div>
+                        </div>
+                        <span className="ml-auto text-gray-300 shrink-0">{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+                      </div>
+                    </td>
+
+                    {/* Overall consensus */}
+                    <td className="px-3 py-2.5 border-r border-gray-200 text-center">
+                      <span className={cn('inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold',
+                        group.consensusScore >= 0.8 ? 'bg-green-100 text-green-700' :
+                        group.consensusScore >= 0.6 ? 'bg-emerald-100 text-emerald-700' :
+                        group.consensusScore >= 0.4 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'
+                      )}>
+                        {pct}%
+                      </span>
+                    </td>
+
+                    {/* Per-submod cells */}
+                    {subMods.map(sm => {
+                      const coding = codings.find(c => c.subModName === sm);
+                      const grp = coding?.groups.find(g => g.name === group.name);
+                      const has = !!grp;
+                      const count = grp?.items.length ?? 0;
+                      return (
+                        <td key={sm} className="px-3 py-2.5 border-r border-gray-200 last:border-r-0 text-center">
+                          {has ? (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-green-600 font-bold text-base leading-none">✓</span>
+                              <span className="text-xs text-gray-400">{count} madde</span>
+                            </div>
+                          ) : (
+                            <span className="text-gray-200 text-lg">—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+
+                  {/* Expanded: item detail rows */}
+                  {isExpanded && group.items.map(item => (
+                    <tr key={item.id} className="border-b border-gray-100 bg-violet-50/40">
+                      <td className={cn('pl-10 pr-4 py-2 border-r border-gray-200 sticky left-0 bg-violet-50/40 z-10')}>
+                        <p className="text-xs text-gray-700 leading-snug">{item.text}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{item.expertNames.join(', ')}</p>
+                      </td>
+                      <td className="px-3 py-2 border-r border-gray-200 text-center">
+                        <span className={cn('inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-medium',
+                          item.consensusScore >= 0.8 ? 'bg-green-100 text-green-700' :
+                          item.consensusScore >= 0.5 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'
+                        )}>
+                          {Math.round(item.consensusScore * 100)}%
+                        </span>
+                      </td>
+                      {subMods.map(sm => {
+                        const has = item.subModSources.includes(sm);
+                        return (
+                          <td key={sm} className="px-3 py-2 border-r border-gray-200 last:border-r-0 text-center">
+                            {has ? <span className="text-green-500 text-sm">✓</span> : <span className="text-gray-200 text-sm">—</span>}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -163,6 +308,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [newSessionName, setNewSessionName] = useState('');
   const [filterThreshold, setFilterThreshold] = useState(0);
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('grid');
   const fileRef = useRef<HTMLInputElement>(null);
   const t2FileRef = useRef<HTMLInputElement>(null);
 
@@ -396,6 +542,21 @@ export default function App() {
               <p className="text-xs text-gray-400">{selectedSession?.name} · {t2Codings.length} altmod · {t3Groups.length} grup · {t3Groups.reduce((s, g) => s + g.items.length, 0)} madde</p>
             </div>
             <div className="flex items-center gap-3">
+              {/* View toggle */}
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition', viewMode === 'grid' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}
+                >
+                  <LayoutGrid size={13} /> Matris
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition border-l border-gray-200', viewMode === 'list' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}
+                >
+                  <LayoutList size={13} /> Liste
+                </button>
+              </div>
               <div className="flex items-center gap-1 text-xs text-gray-500">
                 <span>Min %</span>
                 <input type="number" min={0} max={100} step={10} value={filterThreshold} onChange={e => setFilterThreshold(Number(e.target.value))} className="w-14 rounded border border-gray-200 px-2 py-1 text-xs" />
@@ -424,17 +585,21 @@ export default function App() {
             </div>
           </div>
 
-          {/* Groups */}
-          <div className="space-y-3">
-            {filtered.map(g => (
-              <T3GroupPanel key={g.id} group={g} totalMods={t2Codings.length} onUpdateNotes={() => {}} />
-            ))}
-            {filtered.length === 0 && (
-              <div className="text-center py-12 text-gray-400">
-                <p>Eşik değerini düşürün veya T2 verisi yükleyin.</p>
-              </div>
-            )}
-          </div>
+          {/* Groups — Matrix or List */}
+          {viewMode === 'grid' ? (
+            <ConsensusGrid groups={filtered} codings={t2Codings} />
+          ) : (
+            <div className="space-y-3">
+              {filtered.map(g => (
+                <T3GroupPanel key={g.id} group={g} totalMods={t2Codings.length} onUpdateNotes={() => {}} />
+              ))}
+              {filtered.length === 0 && (
+                <div className="text-center py-12 text-gray-400">
+                  <p>Eşik değerini düşürün veya T2 verisi yükleyin.</p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Discussion notes */}
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
