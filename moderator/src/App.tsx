@@ -144,24 +144,35 @@ function SortableItemCard({ item, colorIdx }: { item: CodedItem; colorIdx: numbe
   );
 }
 
-function GroupPanel({ group, colorIdx, onRename, onDelete, onDeleteItem }: {
+function GroupPanel({ group, colorIdx, onRename, onDelete, onDeleteItem, onAddItem }: {
   group: T2Group; colorIdx: number;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onDeleteItem: (groupId: string, itemId: string) => void;
+  onAddItem: (groupId: string, text: string) => void;
 }) {
   const color = COLORS[colorIdx % COLORS.length];
   const [collapsed, setCollapsed] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameText, setNameText] = useState(group.name);
+  const [addingItem, setAddingItem] = useState(false);
+  const [newItemText, setNewItemText] = useState('');
+  const addInputRef = useRef<HTMLInputElement>(null);
   const { setNodeRef, isOver } = useDroppable({ id: group.id });
+
+  const commitAdd = () => {
+    if (newItemText.trim()) { onAddItem(group.id, newItemText.trim()); setNewItemText(''); }
+    setAddingItem(false);
+  };
+
   return (
     <motion.div layout ref={setNodeRef} className={cn('rounded-xl border overflow-hidden transition-all', color.border, color.bg, isOver && 'ring-2 ring-blue-400 ring-offset-1')}>
       <div className={cn('flex items-center gap-2 px-3 py-2', color.header)}>
         <button onClick={() => setCollapsed(c => !c)} className="shrink-0">{collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}</button>
         {renaming ? (
           <div className="flex flex-1 gap-1">
-            <input className="flex-1 rounded border px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" value={nameText} onChange={e => setNameText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { onRename(group.id, nameText); setRenaming(false); } if (e.key === 'Escape') setRenaming(false); }} autoFocus />
+            <input className="flex-1 rounded border px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" value={nameText} onChange={e => setNameText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { onRename(group.id, nameText); setRenaming(false); } if (e.key === 'Escape') setRenaming(false); }} autoFocus />
             <button onClick={() => { onRename(group.id, nameText); setRenaming(false); }} className="text-green-600"><Check size={14} /></button>
           </div>
         ) : (
@@ -172,6 +183,7 @@ function GroupPanel({ group, colorIdx, onRename, onDelete, onDeleteItem }: {
             </div>
             <div className="flex items-center gap-1 shrink-0">
               <span className={cn('text-xs rounded-full px-2 py-0.5 font-medium', color.badge)}>{group.items.length}</span>
+              <button onClick={() => { setAddingItem(true); setCollapsed(false); setTimeout(() => addInputRef.current?.focus(), 50); }} className="p-0.5 text-gray-400 hover:text-emerald-600" title="Yeni madde ekle"><Plus size={12} /></button>
               <button onClick={() => { setNameText(group.name); setRenaming(true); }} className="p-0.5 text-gray-400 hover:text-gray-700"><Pencil size={12} /></button>
               <button onClick={() => onDelete(group.id)} className="p-0.5 text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
             </div>
@@ -182,8 +194,8 @@ function GroupPanel({ group, colorIdx, onRename, onDelete, onDeleteItem }: {
         {!collapsed && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="px-2 pb-2">
             <SortableContext items={group.items.map(i => i.id)} strategy={verticalListSortingStrategy}>
-              <div className={cn('space-y-1.5 mt-2 min-h-[40px] rounded-lg', group.items.length === 0 && 'border-2 border-dashed border-gray-300 flex items-center justify-center py-3')}>
-                {group.items.length === 0 ? <span className="text-xs text-gray-400">Buraya kart sürükleyin</span> : group.items.map(item => (
+              <div className={cn('space-y-1.5 mt-2 min-h-[40px] rounded-lg', group.items.length === 0 && !addingItem && 'border-2 border-dashed border-gray-300 flex items-center justify-center py-3')}>
+                {group.items.length === 0 && !addingItem ? <span className="text-xs text-gray-400">Buraya kart sürükleyin</span> : group.items.map(item => (
                   <div key={item.id} className="flex items-start gap-1">
                     <div className="flex-1"><SortableItemCard item={item} colorIdx={colorIdx} /></div>
                     <button onClick={() => onDeleteItem(group.id, item.id)} className="mt-1 p-0.5 text-red-300 hover:text-red-500 shrink-0"><X size={12} /></button>
@@ -191,6 +203,21 @@ function GroupPanel({ group, colorIdx, onRename, onDelete, onDeleteItem }: {
                 ))}
               </div>
             </SortableContext>
+            <AnimatePresence>
+              {addingItem && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-1.5 flex gap-1">
+                  <input ref={addInputRef} className="flex-1 rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="Yeni madde metni..." value={newItemText} onChange={e => setNewItemText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') commitAdd(); if (e.key === 'Escape') { setAddingItem(false); setNewItemText(''); } }} />
+                  <button onClick={commitAdd} className="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-700"><Check size={12} /></button>
+                  <button onClick={() => { setAddingItem(false); setNewItemText(''); }} className="p-1 text-gray-400 hover:text-gray-600"><X size={12} /></button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {!addingItem && (
+              <button onClick={() => { setAddingItem(true); setTimeout(() => addInputRef.current?.focus(), 50); }} className="mt-1.5 flex items-center gap-1 text-xs text-gray-400 hover:text-emerald-600 transition w-full px-1">
+                <Plus size={11} /> Madde ekle
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -346,18 +373,28 @@ function SortableT3ItemCard({ item, totalMods, colorIdx, onDelete }: { item: T3I
   );
 }
 
-function T3EditGroupPanel({ group, colorIdx, totalMods, onRename, onDelete, onDeleteItem }: {
+function T3EditGroupPanel({ group, colorIdx, totalMods, onRename, onDelete, onDeleteItem, onAddItem }: {
   group: T3Group; colorIdx: number; totalMods: number;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onDeleteItem: (groupId: string, itemId: string) => void;
+  onAddItem: (groupId: string, text: string) => void;
 }) {
   const color = COLORS[colorIdx % COLORS.length];
   const [collapsed, setCollapsed] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameText, setNameText] = useState(group.name);
+  const [addingItem, setAddingItem] = useState(false);
+  const [newItemText, setNewItemText] = useState('');
+  const addInputRef = useRef<HTMLInputElement>(null);
   const { setNodeRef, isOver } = useDroppable({ id: group.id });
   const pct = Math.round(group.consensusScore * 100);
+
+  const commitAdd = () => {
+    if (newItemText.trim()) { onAddItem(group.id, newItemText.trim()); setNewItemText(''); }
+    setAddingItem(false);
+  };
+
   return (
     <motion.div layout ref={setNodeRef} className={cn('rounded-xl border overflow-hidden transition-all', color.border, color.bg, isOver && 'ring-2 ring-blue-400 ring-offset-1')}>
       <div className={cn('flex items-center gap-2 px-3 py-2', color.header)}>
@@ -375,8 +412,9 @@ function T3EditGroupPanel({ group, colorIdx, totalMods, onRename, onDelete, onDe
               <span className="text-xs text-gray-400">{group.category}</span>
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              <span className={cn('text-xs rounded-full px-2 py-0.5 font-medium', color.badge)}>{group.items.length} madde</span>
+              <span className={cn('text-xs rounded-full px-1.5 py-0.5 font-medium', color.badge)}>{group.items.length}</span>
               <span className={cn('text-xs rounded-full px-1.5 py-0.5 font-medium', group.consensusScore >= 0.8 ? 'bg-green-200 text-green-700' : group.consensusScore >= 0.5 ? 'bg-amber-200 text-amber-700' : 'bg-rose-200 text-rose-700')}>{pct}%</span>
+              <button onClick={() => { setAddingItem(true); setCollapsed(false); setTimeout(() => addInputRef.current?.focus(), 50); }} className="p-0.5 text-gray-400 hover:text-emerald-600" title="Yeni madde ekle"><Plus size={12} /></button>
               <button onClick={() => { setNameText(group.name); setRenaming(true); }} className="p-0.5 text-gray-400 hover:text-gray-700"><Pencil size={12} /></button>
               <button onClick={() => onDelete(group.id)} className="p-0.5 text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
             </div>
@@ -387,8 +425,8 @@ function T3EditGroupPanel({ group, colorIdx, totalMods, onRename, onDelete, onDe
         {!collapsed && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="px-2 pb-2">
             <SortableContext items={group.items.map(i => i.id)} strategy={verticalListSortingStrategy}>
-              <div className={cn('space-y-1.5 mt-2 min-h-[40px] rounded-lg', group.items.length === 0 && 'border-2 border-dashed border-gray-300 flex items-center justify-center py-3')}>
-                {group.items.length === 0
+              <div className={cn('space-y-1.5 mt-2 min-h-[40px] rounded-lg', group.items.length === 0 && !addingItem && 'border-2 border-dashed border-gray-300 flex items-center justify-center py-3')}>
+                {group.items.length === 0 && !addingItem
                   ? <span className="text-xs text-gray-400">Buraya madde sürükleyin</span>
                   : group.items.map(item => (
                     <SortableT3ItemCard key={item.id} item={item} totalMods={totalMods} colorIdx={colorIdx}
@@ -396,6 +434,21 @@ function T3EditGroupPanel({ group, colorIdx, totalMods, onRename, onDelete, onDe
                   ))}
               </div>
             </SortableContext>
+            <AnimatePresence>
+              {addingItem && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-1.5 flex gap-1">
+                  <input ref={addInputRef} className="flex-1 rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="Yeni madde metni..." value={newItemText} onChange={e => setNewItemText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') commitAdd(); if (e.key === 'Escape') { setAddingItem(false); setNewItemText(''); } }} />
+                  <button onClick={commitAdd} className="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-700"><Check size={12} /></button>
+                  <button onClick={() => { setAddingItem(false); setNewItemText(''); }} className="p-1 text-gray-400 hover:text-gray-600"><X size={12} /></button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {!addingItem && (
+              <button onClick={() => { setAddingItem(true); setTimeout(() => addInputRef.current?.focus(), 50); }} className="mt-1.5 flex items-center gap-1 text-xs text-gray-400 hover:text-emerald-600 transition w-full px-1">
+                <Plus size={11} /> Madde ekle
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -895,6 +948,7 @@ export default function App() {
                     onRename={(id, name) => setCodeGroups(prev => prev.map(g => g.id === id ? { ...g, name } : g))}
                     onDelete={id => setCodeGroups(prev => prev.filter(g => g.id !== id))}
                     onDeleteItem={(groupId, itemId) => setCodeGroups(prev => prev.map(g => g.id === groupId ? { ...g, items: g.items.filter(i => i.id !== itemId) } : g))}
+                    onAddItem={(groupId, text) => setCodeGroups(prev => prev.map(g => g.id === groupId ? { ...g, items: [...g.items, { id: `item_custom_${Date.now()}`, text, originalText: text, expertName: modName, category: g.category, group: g.name }] } : g))}
                   />
                 ))}
               </div>
@@ -1027,6 +1081,7 @@ export default function App() {
                       onRename={(id, name) => setT3Groups(prev => prev.map(g => g.id === id ? { ...g, name } : g))}
                       onDelete={id => setT3Groups(prev => prev.filter(g => g.id !== id))}
                       onDeleteItem={(groupId, itemId) => setT3Groups(prev => prev.map(g => g.id === groupId ? { ...g, items: g.items.filter(i => i.id !== itemId) } : g))}
+                      onAddItem={(groupId, text) => setT3Groups(prev => prev.map(g => g.id === groupId ? { ...g, items: [...g.items, { id: `t3item_custom_${Date.now()}`, text, expertNames: [modName], consensusScore: 0, subModSources: [] }] } : g))}
                     />
                   ))}
                 </div>

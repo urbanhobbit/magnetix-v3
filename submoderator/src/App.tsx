@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   DndContext, DragOverlay, closestCorners,
@@ -10,7 +10,7 @@ import { useSortable, SortableContext, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import {
   LogIn, Save, FolderPlus, Trash2, GripVertical,
-  CheckCircle, RefreshCw, ChevronDown, ChevronRight, Pencil, Check, X, Database,
+  CheckCircle, RefreshCw, ChevronDown, ChevronRight, Pencil, Check, X, Database, Plus,
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import type { L1Note, T2Group, T2Coding, CodedItem } from '@shared/types';
@@ -121,18 +121,27 @@ function SortableItemCard({ item, colorIdx }: { item: CodedItem; colorIdx: numbe
 // ─── Group Panel ─────────────────────────────────────────────────────────────
 
 function GroupPanel({
-  group, colorIdx, onRename, onDelete, onDeleteItem,
+  group, colorIdx, onRename, onDelete, onDeleteItem, onAddItem,
 }: {
   group: T2Group; colorIdx: number;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onDeleteItem: (groupId: string, itemId: string) => void;
+  onAddItem: (groupId: string, text: string) => void;
 }) {
   const color = COLORS[colorIdx % COLORS.length];
   const [collapsed, setCollapsed] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameText, setNameText] = useState(group.name);
+  const [addingItem, setAddingItem] = useState(false);
+  const [newItemText, setNewItemText] = useState('');
+  const addInputRef = useRef<HTMLInputElement>(null);
   const { setNodeRef, isOver } = useDroppable({ id: group.id });
+
+  const commitAdd = () => {
+    if (newItemText.trim()) { onAddItem(group.id, newItemText.trim()); setNewItemText(''); }
+    setAddingItem(false);
+  };
 
   return (
     <motion.div layout ref={setNodeRef} className={cn('rounded-xl border overflow-hidden transition-all', color.border, color.bg, isOver && 'ring-2 ring-blue-400 ring-offset-1')}>
@@ -153,6 +162,7 @@ function GroupPanel({
             </div>
             <div className="flex items-center gap-1 shrink-0">
               <span className={cn('text-xs rounded-full px-2 py-0.5 font-medium', color.badge)}>{group.items.length}</span>
+              <button onClick={() => { setAddingItem(true); setCollapsed(false); setTimeout(() => addInputRef.current?.focus(), 50); }} className="p-0.5 text-gray-400 hover:text-emerald-600" title="Yeni madde ekle"><Plus size={12} /></button>
               <button onClick={() => { setNameText(group.name); setRenaming(true); }} className="p-0.5 text-gray-400 hover:text-gray-700"><Pencil size={12} /></button>
               <button onClick={() => onDelete(group.id)} className="p-0.5 text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
             </div>
@@ -163,8 +173,8 @@ function GroupPanel({
         {!collapsed && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="px-2 pb-2">
             <SortableContext items={group.items.map(i => i.id)} strategy={verticalListSortingStrategy}>
-              <div className={cn('space-y-1.5 mt-2 min-h-[40px] rounded-lg', group.items.length === 0 && 'border-2 border-dashed border-gray-300 flex items-center justify-center py-3', isOver && group.items.length === 0 && 'border-blue-400 bg-blue-50')}>
-                {group.items.length === 0 ? (
+              <div className={cn('space-y-1.5 mt-2 min-h-[40px] rounded-lg', group.items.length === 0 && !addingItem && 'border-2 border-dashed border-gray-300 flex items-center justify-center py-3', isOver && group.items.length === 0 && 'border-blue-400 bg-blue-50')}>
+                {group.items.length === 0 && !addingItem ? (
                   <span className="text-xs text-gray-400">Buraya kart sürükleyin</span>
                 ) : group.items.map(item => (
                   <div key={item.id} className="flex items-start gap-1">
@@ -176,6 +186,28 @@ function GroupPanel({
                 ))}
               </div>
             </SortableContext>
+            {/* Inline add item */}
+            <AnimatePresence>
+              {addingItem && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-1.5 flex gap-1">
+                  <input
+                    ref={addInputRef}
+                    className="flex-1 rounded-lg border border-gray-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-400"
+                    placeholder="Yeni madde metni..."
+                    value={newItemText}
+                    onChange={e => setNewItemText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') commitAdd(); if (e.key === 'Escape') { setAddingItem(false); setNewItemText(''); } }}
+                  />
+                  <button onClick={commitAdd} className="rounded-lg bg-violet-600 px-2 py-1 text-xs font-semibold text-white hover:bg-violet-700"><Check size={12} /></button>
+                  <button onClick={() => { setAddingItem(false); setNewItemText(''); }} className="p-1 text-gray-400 hover:text-gray-600"><X size={12} /></button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {!addingItem && (
+              <button onClick={() => { setAddingItem(true); setTimeout(() => addInputRef.current?.focus(), 50); }} className="mt-1.5 flex items-center gap-1 text-xs text-gray-400 hover:text-violet-600 transition w-full px-1">
+                <Plus size={11} /> Madde ekle
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -483,6 +515,7 @@ export default function App() {
                   onRename={(id, name) => setGroups(prev => prev.map(g => g.id === id ? { ...g, name } : g))}
                   onDelete={id => setGroups(prev => prev.filter(g => g.id !== id))}
                   onDeleteItem={(groupId, itemId) => setGroups(prev => prev.map(g => g.id === groupId ? { ...g, items: g.items.filter(i => i.id !== itemId) } : g))}
+                  onAddItem={(groupId, text) => setGroups(prev => prev.map(g => g.id === groupId ? { ...g, items: [...g.items, { id: `item_custom_${Date.now()}`, text, originalText: text, expertName: subModName, category: g.category, group: g.name }] } : g))}
                 />
               ))}
             </div>
