@@ -486,11 +486,29 @@ export default function App() {
 
             {/* T1 section */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 mb-4">
-              <h3 className="font-semibold text-gray-900 mb-1">T1 — Uzman Notları</h3>
-              <p className="text-sm text-gray-400 mb-1">
-                {l1Notes.length > 0 ? `${l1Notes.length} not Firestore'dan yüklendi.` : 'Firestore\'da not bulunamadı.'}
-              </p>
-              <p className="text-xs text-gray-400">AltModeratörler bu oturumu seçtiğinde notları otomatik olarak alır.</p>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold text-gray-900">T1 — Uzman Notları</h3>
+                <span className="text-xs text-gray-400">
+                  {l1Notes.length > 0 ? `${l1Notes.length} uzman` : 'Not yok'}
+                </span>
+              </div>
+              {l1Notes.length === 0 && (
+                <p className="text-sm text-gray-400">Firestore'da bu oturum için henüz uzman notu bulunamadı.</p>
+              )}
+              {l1Notes.length > 0 && (
+                <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                  {l1Notes.map(note => (
+                    <div key={note.id} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-semibold text-emerald-700">{note.expertName}</span>
+                        <span className="text-xs text-gray-300">{new Date(note.timestamp).toLocaleString('tr')}</span>
+                      </div>
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{note.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mt-2">AltModeratörler bu oturumu seçtiğinde notları otomatik olarak alır.</p>
             </div>
 
             {/* T2 section */}
