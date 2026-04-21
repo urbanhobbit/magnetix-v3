@@ -11,7 +11,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   LogIn, Upload, Download, RefreshCw, CheckCircle, Users,
   Save, Plus, ChevronDown, ChevronRight, MessageSquare, BarChart2,
-  LayoutList, LayoutGrid, FolderPlus, GripVertical, Pencil, Check, X, Trash2,
+  LayoutList, LayoutGrid, FolderPlus, GripVertical, Pencil, Check, X, Trash2, FileText,
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import type {
@@ -20,7 +20,7 @@ import type {
 import { MOCK_L1_NOTES, MOCK_T2_CODINGS } from '@shared/mockData';
 import {
   createSession, listSessions, updateSessionStatus,
-  getL1Notes, getT2Codings, saveT3Final,
+  getL1Notes, getT2Codings, saveT3Final, getT3Final,
   saveModeratorT2, getModeratorT2,
 } from '@shared/firestoreService';
 
@@ -456,6 +456,179 @@ function T3EditGroupPanel({ group, colorIdx, totalMods, onRename, onDelete, onDe
   );
 }
 
+// ─── T3 Report View ──────────────────────────────────────────────────────────
+
+function T3ReportView({ final, onBack, onExport }: { final: T3Final; onBack: () => void; onExport: () => void }) {
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const maxScore = Math.max(...final.groups.map(g => g.consensusScore), 0.01);
+
+  const scoreColor = (s: number) =>
+    s >= 0.8 ? 'bg-green-500' : s >= 0.6 ? 'bg-emerald-400' : s >= 0.4 ? 'bg-amber-400' : 'bg-rose-400';
+  const scoreBadge = (s: number) =>
+    s >= 0.8 ? 'bg-green-100 text-green-700' : s >= 0.6 ? 'bg-emerald-100 text-emerald-700' : s >= 0.4 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700';
+
+  // top items across all groups sorted by consensusScore
+  const topItems = final.groups
+    .flatMap(g => g.items.map(i => ({ ...i, groupName: g.name })))
+    .sort((a, b) => b.consensusScore - a.consensusScore)
+    .slice(0, 10);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-20 px-4 py-3">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <button onClick={onBack} className="text-sm text-gray-400 hover:text-gray-700">←</button>
+            <div>
+              <h1 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <FileText size={18} className="text-emerald-600" /> T3 Raporu
+              </h1>
+              <p className="text-xs text-gray-400">{final.moderatorName} · {new Date(final.savedAt).toLocaleString('tr')}</p>
+            </div>
+          </div>
+          <button onClick={onExport} className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50 transition">
+            <Download size={13} /> JSON İndir
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto p-4 space-y-6">
+
+        {/* Summary cards */}
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
+            <div className="text-3xl font-bold text-gray-900">{final.groups.length}</div>
+            <div className="text-xs text-gray-400 mt-1">Toplam Grup</div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
+            <div className="text-3xl font-bold text-gray-900">{final.groups.reduce((s, g) => s + g.items.length, 0)}</div>
+            <div className="text-xs text-gray-400 mt-1">Toplam Madde</div>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
+            <div className="text-3xl font-bold text-emerald-600">{final.groups.filter(g => g.consensusScore >= 0.5).length}</div>
+            <div className="text-xs text-gray-400 mt-1">≥%50 Consensus Grup</div>
+          </div>
+        </div>
+
+        {/* Consensus bar chart */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <h2 className="font-semibold text-gray-900 mb-4">Grup Consensus Dağılımı</h2>
+          <div className="space-y-2.5">
+            {[...final.groups].sort((a, b) => b.consensusScore - a.consensusScore).map(group => {
+              const pct = Math.round(group.consensusScore * 100);
+              const barW = Math.round((group.consensusScore / maxScore) * 100);
+              return (
+                <div key={group.id} className="flex items-center gap-3">
+                  <div className="w-44 shrink-0 text-right">
+                    <span className="text-xs font-medium text-gray-700 truncate block">{group.name}</span>
+                    <span className="text-xs text-gray-400">{group.items.length} madde</span>
+                  </div>
+                  <div className="flex-1 flex items-center gap-2">
+                    <div className="flex-1 bg-gray-100 rounded-full h-3 overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${barW}%` }}
+                        transition={{ duration: 0.6, ease: 'easeOut' }}
+                        className={cn('h-3 rounded-full', scoreColor(group.consensusScore))}
+                      />
+                    </div>
+                    <span className={cn('text-xs font-semibold rounded-full px-2 py-0.5 w-12 text-center', scoreBadge(group.consensusScore))}>{pct}%</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Top items */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <h2 className="font-semibold text-gray-900 mb-4">En Yüksek Consensus Maddeler (Top 10)</h2>
+          <div className="space-y-2">
+            {topItems.map((item, idx) => (
+              <div key={item.id} className="flex items-start gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+                <span className="text-xs font-bold text-gray-300 w-5 shrink-0 mt-0.5">{idx + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-800 leading-snug">{item.text}</p>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <span className="text-xs text-gray-400 bg-gray-200 rounded px-1.5 py-0.5">{item.groupName}</span>
+                    <span className={cn('text-xs font-medium rounded-full px-2 py-0.5', scoreBadge(item.consensusScore))}>
+                      <Users size={9} className="inline mr-0.5" />{Math.round(item.consensusScore * 100)}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Group cards */}
+        <div>
+          <h2 className="font-semibold text-gray-900 mb-3">Gruplar & Maddeler</h2>
+          <div className="space-y-3">
+            {[...final.groups].sort((a, b) => b.consensusScore - a.consensusScore).map((group, i) => {
+              const pct = Math.round(group.consensusScore * 100);
+              const isOpen = expandedGroup === group.id;
+              const color = COLORS[i % COLORS.length];
+              return (
+                <motion.div layout key={group.id} className={cn('rounded-xl border overflow-hidden shadow-sm', color.border, color.bg)}>
+                  <div className={cn('flex items-center gap-3 px-4 py-3 cursor-pointer', color.header)} onClick={() => setExpandedGroup(isOpen ? null : group.id)}>
+                    <button className="shrink-0 text-gray-400">{isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={cn('font-semibold text-sm', color.text)}>{group.name}</span>
+                        <span className="text-xs text-gray-400 bg-white/60 rounded px-1.5 py-0.5">{group.category}</span>
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">{group.items.length} madde</div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="w-24 bg-white/50 rounded-full h-2 overflow-hidden">
+                        <div className={cn('h-2 rounded-full', scoreColor(group.consensusScore))} style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className={cn('text-xs font-semibold rounded-full px-2 py-0.5', scoreBadge(group.consensusScore))}>{pct}%</span>
+                    </div>
+                  </div>
+                  <AnimatePresence>
+                    {isOpen && (
+                      <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+                        <div className="px-4 pb-3 space-y-1.5">
+                          {group.items.map(item => (
+                            <div key={item.id} className="flex items-start gap-2 rounded-lg border border-white/80 bg-white px-3 py-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-gray-800">{item.text}</p>
+                                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                  <span className={cn('text-xs font-medium rounded-full px-1.5 py-0.5', scoreBadge(item.consensusScore))}>
+                                    {Math.round(item.consensusScore * 100)}%
+                                  </span>
+                                  <span className="text-xs text-gray-400">{item.expertNames.join(', ')}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Discussion notes */}
+        {final.notes && (
+          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+            <h2 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+              <MessageSquare size={16} className="text-emerald-600" /> Tartışma Notları
+            </h2>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{final.notes}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── T3 Group Panel (read-only list view) ────────────────────────────────────
 
 function T3GroupPanel({ group, totalMods }: { group: T3Group; totalMods: number }) {
@@ -510,7 +683,7 @@ function T3GroupPanel({ group, totalMods }: { group: T3Group; totalMods: number 
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-type Step = 'login' | 'sessions' | 'manage' | 'code' | 'review' | 'done';
+type Step = 'login' | 'sessions' | 'manage' | 'code' | 'review' | 'done' | 'report';
 
 export default function App() {
   const [step, setStep] = useState<Step>('login');
@@ -525,6 +698,7 @@ export default function App() {
   const [newSessionName, setNewSessionName] = useState('');
   const [filterThreshold, setFilterThreshold] = useState(0);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('grid');
+  const [reportData, setReportData] = useState<T3Final | null>(null);
 
   // Coding board state (moderatör T2 oluşturma)
   const [codeGroups, setCodeGroups] = useState<T2Group[]>([]);
@@ -745,12 +919,26 @@ export default function App() {
       console.error(e);
       localStorage.setItem(`t3_${selectedSession.id}`, JSON.stringify(final));
     }
-    const blob = new Blob([JSON.stringify(final, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `t3_final_${selectedSession.id}.json`; a.click();
-    URL.revokeObjectURL(url);
+    setReportData(final);
     setLoading(false);
     setStep('done');
+  };
+
+  const exportT3Json = (final: T3Final) => {
+    const blob = new Blob([JSON.stringify(final, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `t3_final_${final.sessionId}.json`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleViewReport = async (s: Session) => {
+    setLoading(true);
+    try {
+      const final = await getT3Final(s.id);
+      if (final) { setReportData(final); setStep('report'); }
+      else alert('Bu oturum için henüz T3 kaydı yok.');
+    } catch { alert('T3 verisi yüklenemedi.'); }
+    setLoading(false);
   };
 
   // ── Login ─────────────────────────────────────────────────────────────────
@@ -889,6 +1077,11 @@ export default function App() {
                 {t2Codings.length > 0 && (
                   <button onClick={() => setStep('review')} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition">
                     <BarChart2 size={14} /> Consensus Görünümü →
+                  </button>
+                )}
+                {selectedSession?.status === 'done' && (
+                  <button onClick={() => selectedSession && handleViewReport(selectedSession)} disabled={loading} className="flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition">
+                    {loading ? <RefreshCw size={13} className="animate-spin" /> : <FileText size={13} />} T3 Raporu Görüntüle
                   </button>
                 )}
               </div>
@@ -1107,16 +1300,46 @@ export default function App() {
     );
   }
 
+  // ── Report (from saved T3) ───────────────────────────────────────────────
+
+  if (step === 'report' && reportData) {
+    return (
+      <T3ReportView
+        final={reportData}
+        onBack={() => setStep('manage')}
+        onExport={() => exportT3Json(reportData)}
+      />
+    );
+  }
+
   // ── Done ─────────────────────────────────────────────────────────────────
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50 flex items-center justify-center p-4">
-      <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-2xl shadow-xl p-10 w-full max-w-md text-center">
-        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle size={32} className="text-green-600" /></div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Tamamlandı!</h2>
-        <p className="text-gray-500 text-sm">T3 sonuçları kaydedildi ve indirildi.</p>
-        <button onClick={() => { setStep('sessions'); setSelectedSession(null); setT2Codings([]); setT3Groups([]); setDiscussionNotes(''); }} className="mt-6 text-sm text-emerald-600 hover:underline">Başka oturuma geç</button>
-      </motion.div>
-    </div>
-  );
+  if (reportData) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50">
+        {/* Success banner */}
+        <div className="bg-emerald-600 text-white px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle size={18} />
+            <span className="text-sm font-semibold">T3 kaydedildi!</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => exportT3Json(reportData)} className="flex items-center gap-1 rounded-lg border border-white/30 px-3 py-1 text-xs font-medium hover:bg-emerald-700 transition">
+              <Download size={12} /> JSON İndir
+            </button>
+            <button onClick={() => { setStep('sessions'); setSelectedSession(null); setT2Codings([]); setT3Groups([]); setDiscussionNotes(''); setReportData(null); }} className="text-xs text-emerald-200 hover:text-white ml-2">
+              Yeni oturum →
+            </button>
+          </div>
+        </div>
+        <T3ReportView
+          final={reportData}
+          onBack={() => setStep('sessions')}
+          onExport={() => exportT3Json(reportData)}
+        />
+      </div>
+    );
+  }
+
+  return null;
 }
