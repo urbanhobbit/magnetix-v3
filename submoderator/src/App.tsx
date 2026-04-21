@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   DndContext, DragOverlay, closestCorners,
@@ -9,13 +9,13 @@ import { useDroppable } from '@dnd-kit/core';
 import { useSortable, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
-  LogIn, Upload, Save, FolderPlus, Trash2, GripVertical,
+  LogIn, Save, FolderPlus, Trash2, GripVertical,
   CheckCircle, RefreshCw, ChevronDown, ChevronRight, Pencil, Check, X, Database,
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import type { L1Note, T2Group, T2Coding, CodedItem } from '@shared/types';
-import { MOCK_L1_NOTES, MOCK_T2_CODINGS } from '@shared/mockData';
-import { saveT2Coding, listSessions } from '@shared/firestoreService';
+import { MOCK_L1_NOTES } from '@shared/mockData';
+import { saveT2Coding, listSessions, getL1Notes } from '@shared/firestoreService';
 import type { Session } from '@shared/types';
 
 // ─── Rule-based categorization ───────────────────────────────────────────────
@@ -185,7 +185,7 @@ function GroupPanel({
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-type Step = 'login' | 'load' | 'code' | 'done';
+type Step = 'login' | 'sessions' | 'code' | 'done';
 
 export default function App() {
   const [step, setStep] = useState<Step>('login');
@@ -197,10 +197,8 @@ export default function App() {
   const [unassigned, setUnassigned] = useState<CodedItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [showNewGroup, setShowNewGroup] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -210,6 +208,35 @@ export default function App() {
     setGroups(grps);
     setUnassigned([]);
     setStep('code');
+  };
+
+  const handleLogin = async () => {
+    if (!subModName.trim()) return;
+    setLoading(true);
+    try {
+      const s = await listSessions();
+      setSessions(s);
+    } catch { setSessions([]); }
+    setLoading(false);
+    setStep('sessions');
+  };
+
+  const handleSelectSession = async (s: Session) => {
+    setSessionId(s.id);
+    setSessionName(s.name);
+    setLoading(true);
+    try {
+      const notes = await getL1Notes(s.id);
+      if (notes.length > 0) {
+        loadAndParse(notes);
+      } else {
+        // Firestore'da not yok, mock ile devam et (test)
+        loadAndParse(MOCK_L1_NOTES);
+      }
+    } catch {
+      loadAndParse(MOCK_L1_NOTES);
+    }
+    setLoading(false);
   };
 
   // ── Login ────────────────────────────────────────────────────────────────
@@ -228,14 +255,21 @@ export default function App() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Adınız</label>
-              <input className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" placeholder="AltModeratör adı..." value={subModName} onChange={e => setSubModName(e.target.value)} onKeyDown={e => e.key === 'Enter' && subModName.trim() && (listSessions().then(s => { setSessions(s); setStep('load'); }).catch(() => setStep('load')))} autoFocus />
+              <input
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
+                placeholder="AltModeratör adı..."
+                value={subModName}
+                onChange={e => setSubModName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && subModName.trim() && handleLogin()}
+                autoFocus
+              />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Oturum ID</label>
-              <input className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" placeholder="Oturum ID veya adı..." value={sessionId} onChange={e => setSessionId(e.target.value)} />
-            </div>
-            <button onClick={() => { if (!subModName.trim() || !sessionId.trim()) return; setSessionName(sessionId); setStep('load'); }} disabled={!subModName.trim() || !sessionId.trim()} className="w-full flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition">
-              <LogIn size={16} /> Giriş Yap
+            <button
+              onClick={handleLogin}
+              disabled={!subModName.trim() || loading}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition"
+            >
+              {loading ? <RefreshCw size={16} className="animate-spin" /> : <LogIn size={16} />} Giriş Yap
             </button>
           </div>
         </motion.div>
@@ -243,53 +277,43 @@ export default function App() {
     );
   }
 
-  // ── Load ─────────────────────────────────────────────────────────────────
+  // ── Sessions ─────────────────────────────────────────────────────────────
 
-  if (step === 'load') {
+  if (step === 'sessions') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-violet-50 to-purple-100 flex items-center justify-center p-4">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
-          <h2 className="text-xl font-bold text-gray-900 mb-2">T1 Verisini Yükle</h2>
-          <p className="text-sm text-gray-500 mb-6">AltMod: <span className="font-medium text-violet-700">{subModName}</span> · Oturum: <span className="font-medium">{sessionId}</span></p>
-
-          <div className="space-y-3">
-            {/* JSON import */}
-            <button
-              onClick={() => fileRef.current?.click()}
-              className="w-full flex items-center gap-3 rounded-xl border-2 border-dashed border-gray-300 px-4 py-4 hover:border-violet-400 hover:bg-violet-50 transition text-left"
-            >
-              <Upload size={20} className="text-violet-500 shrink-0" />
-              <div>
-                <div className="font-medium text-sm text-gray-900">T1 JSON Dosyası Yükle</div>
-                <div className="text-xs text-gray-400">Moderatörden alınan export dosyası</div>
-              </div>
-            </button>
-            <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={e => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              const reader = new FileReader();
-              reader.onload = ev => {
-                try {
-                  const data = JSON.parse(ev.target?.result as string);
-                  const notes: L1Note[] = Array.isArray(data) ? data : data.notes || data.l1Notes || [];
-                  loadAndParse(notes);
-                } catch { alert('Geçersiz JSON dosyası.'); }
-              };
-              reader.readAsText(f);
-            }} />
-
-            {/* Mock veri */}
-            <button
-              onClick={() => loadAndParse(MOCK_L1_NOTES)}
-              className="w-full flex items-center gap-3 rounded-xl border border-gray-200 px-4 py-4 hover:bg-gray-50 transition text-left"
-            >
-              <Database size={20} className="text-gray-400 shrink-0" />
-              <div>
-                <div className="font-medium text-sm text-gray-700">Mock Veri ile Çalış</div>
-                <div className="text-xs text-gray-400">Test için 5 uzman, {MOCK_L1_NOTES.length} not</div>
-              </div>
-            </button>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Oturum Seç</h2>
+              <p className="text-sm text-gray-500">Hoş geldin, <span className="font-medium text-violet-700">{subModName}</span></p>
+            </div>
+            <button onClick={handleLogin} className="p-2 text-gray-400 hover:text-gray-700"><RefreshCw size={16} /></button>
           </div>
+
+          {loading && <p className="text-sm text-gray-400 text-center py-4">Yükleniyor...</p>}
+
+          {!loading && sessions.length === 0 && (
+            <p className="text-sm text-gray-400 text-center py-8">Henüz oturum yok. Moderatörden oturum oluşturmasını isteyin.</p>
+          )}
+
+          {!loading && sessions.length > 0 && (
+            <div className="space-y-2">
+              {sessions.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => handleSelectSession(s)}
+                  className="w-full text-left rounded-xl border border-gray-200 px-4 py-3 hover:border-violet-300 hover:bg-violet-50 transition"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-gray-900">{s.name}</span>
+                    <span className={cn('text-xs rounded-full px-2 py-0.5', s.status === 'done' ? 'bg-green-100 text-green-700' : s.status === 'moderating' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700')}>{s.status}</span>
+                  </div>
+                  <div className="text-xs text-gray-400 mt-0.5">{new Date(s.createdAt).toLocaleDateString('tr')} · {s.createdBy}</div>
+                </button>
+              ))}
+            </div>
+          )}
         </motion.div>
       </div>
     );
@@ -307,7 +331,7 @@ export default function App() {
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Kodlama Kaydedildi!</h2>
           <p className="text-gray-500 text-sm">Moderatör sizin çalışmanızı görebilecek.</p>
           <p className="text-gray-400 text-xs mt-4">AltMod: <span className="font-medium">{subModName}</span> · Oturum: <span className="font-medium">{sessionId}</span></p>
-          <button onClick={() => { setStep('load'); setSaved(false); setGroups([]); setUnassigned([]); }} className="mt-6 text-sm text-violet-600 hover:underline">Yeni kodlama yap</button>
+          <button onClick={() => { setStep('sessions'); setGroups([]); setUnassigned([]); }} className="mt-6 text-sm text-violet-600 hover:underline">Yeni kodlama yap</button>
         </motion.div>
       </div>
     );

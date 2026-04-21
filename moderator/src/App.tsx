@@ -1,12 +1,12 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  LogIn, Download, Upload, RefreshCw, CheckCircle, Users,
+  LogIn, Upload, RefreshCw, CheckCircle, Users,
   Save, Plus, ChevronDown, ChevronRight, MessageSquare, BarChart2, Trash2,
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import type { Session, L1Note, T2Coding, T2Group, T3Group, T3Item, T3Final } from '@shared/types';
-import { MOCK_L1_NOTES, MOCK_T2_CODINGS } from '@shared/mockData';
+import { MOCK_T2_CODINGS } from '@shared/mockData';
 import {
   createSession, listSessions, updateSessionStatus,
   saveL1Note, getL1Notes, getT2Codings, saveT3Final,
@@ -211,15 +211,6 @@ export default function App() {
     setStep('manage');
   };
 
-  const exportT1 = () => {
-    const data = l1Notes.length > 0 ? l1Notes : MOCK_L1_NOTES;
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url;
-    a.download = `t1_${selectedSession?.id || 'session'}.json`; a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const handleT2Import = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
     const reader = new FileReader();
@@ -350,17 +341,10 @@ export default function App() {
             {/* T1 section */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 mb-4">
               <h3 className="font-semibold text-gray-900 mb-1">T1 — Uzman Notları</h3>
-              <p className="text-sm text-gray-400 mb-3">
+              <p className="text-sm text-gray-400 mb-1">
                 {l1Notes.length > 0 ? `${l1Notes.length} not Firestore'dan yüklendi.` : 'Firestore\'da not bulunamadı.'}
               </p>
-              <div className="flex gap-2 flex-wrap">
-                <button onClick={exportT1} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 transition">
-                  <Download size={14} /> T1 JSON Export (AltMod'a ver)
-                </button>
-                <button onClick={() => { setL1Notes(MOCK_L1_NOTES); }} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition">
-                  Mock T1 Yükle (test)
-                </button>
-              </div>
+              <p className="text-xs text-gray-400">AltModeratörler bu oturumu seçtiğinde notları otomatik olarak alır.</p>
             </div>
 
             {/* T2 section */}
