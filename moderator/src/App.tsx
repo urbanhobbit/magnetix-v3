@@ -316,7 +316,94 @@ function ConsensusGrid({ groups, codings }: { groups: T3Group[]; codings: T2Codi
   );
 }
 
-// ─── T3 Group Panel ───────────────────────────────────────────────────────────
+// ─── T3 Editing Board ────────────────────────────────────────────────────────
+
+function T3ItemCard({ item, totalMods, isDragging }: { item: T3Item; totalMods: number; isDragging?: boolean }) {
+  const pct = Math.round(item.consensusScore * 100);
+  const color = item.consensusScore >= 0.8 ? 'bg-green-100 text-green-700 border-green-200' : item.consensusScore >= 0.5 ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-rose-100 text-rose-700 border-rose-200';
+  return (
+    <div className={cn('rounded-lg border bg-white px-3 py-2 text-sm shadow-sm', isDragging && 'opacity-50')}>
+      <p className="text-gray-800 leading-snug">{item.text}</p>
+      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+        <span className={cn('inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium border', color)}>
+          <Users size={9} /> {pct}%
+        </span>
+        <span className="text-xs text-gray-400">{item.expertNames.join(', ')}</span>
+      </div>
+    </div>
+  );
+}
+
+function SortableT3ItemCard({ item, totalMods, colorIdx, onDelete }: { item: T3Item; totalMods: number; colorIdx: number; onDelete: () => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <div ref={setNodeRef} style={style} className={cn('flex items-start gap-1', isDragging && 'opacity-40')}>
+      <button {...attributes} {...listeners} className="mt-1 cursor-grab text-gray-300 hover:text-gray-500 shrink-0"><GripVertical size={14} /></button>
+      <div className="flex-1"><T3ItemCard item={item} totalMods={totalMods} /></div>
+      <button onClick={onDelete} className="mt-1 p-0.5 text-red-300 hover:text-red-500 shrink-0"><X size={12} /></button>
+    </div>
+  );
+}
+
+function T3EditGroupPanel({ group, colorIdx, totalMods, onRename, onDelete, onDeleteItem }: {
+  group: T3Group; colorIdx: number; totalMods: number;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
+  onDeleteItem: (groupId: string, itemId: string) => void;
+}) {
+  const color = COLORS[colorIdx % COLORS.length];
+  const [collapsed, setCollapsed] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [nameText, setNameText] = useState(group.name);
+  const { setNodeRef, isOver } = useDroppable({ id: group.id });
+  const pct = Math.round(group.consensusScore * 100);
+  return (
+    <motion.div layout ref={setNodeRef} className={cn('rounded-xl border overflow-hidden transition-all', color.border, color.bg, isOver && 'ring-2 ring-blue-400 ring-offset-1')}>
+      <div className={cn('flex items-center gap-2 px-3 py-2', color.header)}>
+        <button onClick={() => setCollapsed(c => !c)} className="shrink-0">{collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}</button>
+        {renaming ? (
+          <div className="flex flex-1 gap-1">
+            <input className="flex-1 rounded border px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" value={nameText} onChange={e => setNameText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { onRename(group.id, nameText); setRenaming(false); } if (e.key === 'Escape') setRenaming(false); }} autoFocus />
+            <button onClick={() => { onRename(group.id, nameText); setRenaming(false); }} className="text-green-600"><Check size={14} /></button>
+          </div>
+        ) : (
+          <div className="flex flex-1 items-center justify-between min-w-0">
+            <div className="min-w-0">
+              <span className={cn('font-semibold text-sm truncate block', color.text)}>{group.name}</span>
+              <span className="text-xs text-gray-400">{group.category}</span>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <span className={cn('text-xs rounded-full px-2 py-0.5 font-medium', color.badge)}>{group.items.length} madde</span>
+              <span className={cn('text-xs rounded-full px-1.5 py-0.5 font-medium', group.consensusScore >= 0.8 ? 'bg-green-200 text-green-700' : group.consensusScore >= 0.5 ? 'bg-amber-200 text-amber-700' : 'bg-rose-200 text-rose-700')}>{pct}%</span>
+              <button onClick={() => { setNameText(group.name); setRenaming(true); }} className="p-0.5 text-gray-400 hover:text-gray-700"><Pencil size={12} /></button>
+              <button onClick={() => onDelete(group.id)} className="p-0.5 text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
+            </div>
+          </div>
+        )}
+      </div>
+      <AnimatePresence>
+        {!collapsed && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="px-2 pb-2">
+            <SortableContext items={group.items.map(i => i.id)} strategy={verticalListSortingStrategy}>
+              <div className={cn('space-y-1.5 mt-2 min-h-[40px] rounded-lg', group.items.length === 0 && 'border-2 border-dashed border-gray-300 flex items-center justify-center py-3')}>
+                {group.items.length === 0
+                  ? <span className="text-xs text-gray-400">Buraya madde sürükleyin</span>
+                  : group.items.map(item => (
+                    <SortableT3ItemCard key={item.id} item={item} totalMods={totalMods} colorIdx={colorIdx}
+                      onDelete={() => onDeleteItem(group.id, item.id)} />
+                  ))}
+              </div>
+            </SortableContext>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+// ─── T3 Group Panel (read-only list view) ────────────────────────────────────
 
 function T3GroupPanel({ group, totalMods }: { group: T3Group; totalMods: number }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -392,6 +479,12 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+
+  // T3 editing board state
+  const [t3ActiveId, setT3ActiveId] = useState<string | null>(null);
+  const [showT3NewGroup, setShowT3NewGroup] = useState(false);
+  const [t3NewGroupName, setT3NewGroupName] = useState('');
+  const [reviewTab, setReviewTab] = useState<'consensus' | 'edit'>('consensus');
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const offlineImportRef = useRef<HTMLInputElement>(null);
@@ -489,6 +582,41 @@ export default function App() {
         return newU;
       });
       return newGroups;
+    });
+  };
+
+  // ── T3 board DnD ─────────────────────────────────────────────────────────
+
+  const allT3Items = t3Groups.flatMap(g => g.items);
+  const t3ActiveItem = t3ActiveId ? allT3Items.find(i => i.id === t3ActiveId) : null;
+
+  function findT3Container(itemId: string): string {
+    for (const g of t3Groups) if (g.items.some(i => i.id === itemId)) return g.id;
+    return '';
+  }
+
+  const handleT3DragStart = (e: DragStartEvent) => setT3ActiveId(e.active.id as string);
+
+  const handleT3DragEnd = (e: DragEndEvent) => {
+    setT3ActiveId(null);
+    const { active, over } = e;
+    if (!over) return;
+    const activeContainer = findT3Container(active.id as string);
+    let overContainer: string;
+    if (t3Groups.some(g => g.id === over.id)) overContainer = over.id as string;
+    else overContainer = findT3Container(over.id as string);
+    if (!overContainer || activeContainer === overContainer) return;
+    setT3Groups(prev => {
+      let movedItem: T3Item | undefined;
+      const next = prev.map(g => {
+        if (g.id === activeContainer) {
+          const idx = g.items.findIndex(i => i.id === active.id);
+          if (idx >= 0) { movedItem = g.items[idx]; return { ...g, items: g.items.filter(i => i.id !== active.id) }; }
+        }
+        return g;
+      });
+      if (!movedItem) return prev;
+      return next.map(g => g.id === overContainer ? { ...g, items: [...g.items, movedItem!] } : g);
     });
   };
 
@@ -797,22 +925,19 @@ export default function App() {
             <div>
               <div className="flex items-center gap-2">
                 <button onClick={() => setStep('manage')} className="text-sm text-gray-400 hover:text-gray-700">←</button>
-                <h1 className="text-lg font-bold text-gray-900">Consensus Görünümü</h1>
+                <h1 className="text-lg font-bold text-gray-900">Consensus & T3 Düzenleme</h1>
               </div>
               <p className="text-xs text-gray-400">{selectedSession?.name} · {t2Codings.length} altmod · {t3Groups.length} grup</p>
             </div>
             <div className="flex items-center gap-3">
+              {/* Tab toggle */}
               <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                <button onClick={() => setViewMode('grid')} className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition', viewMode === 'grid' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}>
-                  <LayoutGrid size={13} /> Matris
+                <button onClick={() => setReviewTab('consensus')} className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition', reviewTab === 'consensus' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}>
+                  <BarChart2 size={13} /> Consensus
                 </button>
-                <button onClick={() => setViewMode('list')} className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition border-l border-gray-200', viewMode === 'list' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}>
-                  <LayoutList size={13} /> Liste
+                <button onClick={() => setReviewTab('edit')} className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition border-l border-gray-200', reviewTab === 'edit' ? 'bg-emerald-600 text-white' : 'text-gray-500 hover:bg-gray-50')}>
+                  <Pencil size={13} /> T3 Düzenle
                 </button>
-              </div>
-              <div className="flex items-center gap-1 text-xs text-gray-500">
-                <span>Min %</span>
-                <input type="number" min={0} max={100} step={10} value={filterThreshold} onChange={e => setFilterThreshold(Number(e.target.value))} className="w-14 rounded border border-gray-200 px-2 py-1 text-xs" />
               </div>
               <button onClick={handleSaveT3} disabled={loading || t3Groups.length === 0} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition">
                 {loading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Kaydet & Tamamla
@@ -820,7 +945,9 @@ export default function App() {
             </div>
           </div>
         </div>
+
         <div className="max-w-5xl mx-auto p-4 space-y-4">
+          {/* Stats */}
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
               <div className="text-2xl font-bold text-gray-900">{t2Codings.length}</div>
@@ -835,14 +962,82 @@ export default function App() {
               <div className="text-xs text-gray-400">≥%50 Consensus</div>
             </div>
           </div>
-          {viewMode === 'grid' ? (
-            <ConsensusGrid groups={filtered} codings={t2Codings} />
-          ) : (
-            <div className="space-y-3">
-              {filtered.map(g => <T3GroupPanel key={g.id} group={g} totalMods={t2Codings.length} />)}
-              {filtered.length === 0 && <div className="text-center py-12 text-gray-400"><p>Eşik değerini düşürün veya T2 verisi yükleyin.</p></div>}
-            </div>
+
+          {/* ── Consensus Tab ── */}
+          {reviewTab === 'consensus' && (
+            <>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                  <button onClick={() => setViewMode('grid')} className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition', viewMode === 'grid' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}>
+                    <LayoutGrid size={13} /> Matris
+                  </button>
+                  <button onClick={() => setViewMode('list')} className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition border-l border-gray-200', viewMode === 'list' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}>
+                    <LayoutList size={13} /> Liste
+                  </button>
+                </div>
+                <div className="flex items-center gap-1 text-xs text-gray-500">
+                  <span>Min %</span>
+                  <input type="number" min={0} max={100} step={10} value={filterThreshold} onChange={e => setFilterThreshold(Number(e.target.value))} className="w-14 rounded border border-gray-200 px-2 py-1 text-xs" />
+                </div>
+              </div>
+              {viewMode === 'grid' ? (
+                <ConsensusGrid groups={filtered} codings={t2Codings} />
+              ) : (
+                <div className="space-y-3">
+                  {filtered.map(g => <T3GroupPanel key={g.id} group={g} totalMods={t2Codings.length} />)}
+                  {filtered.length === 0 && <div className="text-center py-12 text-gray-400"><p>Eşik değerini düşürün veya T2 verisi yükleyin.</p></div>}
+                </div>
+              )}
+            </>
           )}
+
+          {/* ── T3 Edit Tab ── */}
+          {reviewTab === 'edit' && (
+            <>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800">
+                Grupları yeniden adlandırın, maddeleri gruplar arasında sürükleyin veya yeni grup ekleyin. Consensus skorları referans amaçlıdır; düzenleme sonrası "Kaydet & Tamamla" ile T3 kaydedilir.
+              </div>
+
+              {/* New group bar */}
+              <AnimatePresence>
+                {showT3NewGroup && (
+                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-2 flex gap-2">
+                    <input className="flex-1 rounded-lg border border-emerald-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="Yeni grup adı..." value={t3NewGroupName} onChange={e => setT3NewGroupName(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && t3NewGroupName.trim()) {
+                          setT3Groups(prev => [...prev, { id: `t3grp_${Date.now()}`, name: t3NewGroupName.trim(), category: 'Özel', items: [], consensusScore: 0 }]);
+                          setT3NewGroupName(''); setShowT3NewGroup(false);
+                        }
+                        if (e.key === 'Escape') setShowT3NewGroup(false);
+                      }} autoFocus />
+                    <button onClick={() => { if (t3NewGroupName.trim()) { setT3Groups(prev => [...prev, { id: `t3grp_${Date.now()}`, name: t3NewGroupName.trim(), category: 'Özel', items: [], consensusScore: 0 }]); setT3NewGroupName(''); setShowT3NewGroup(false); } }} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">Ekle</button>
+                    <button onClick={() => setShowT3NewGroup(false)} className="p-1.5 text-gray-400 hover:text-gray-700"><X size={14} /></button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <button onClick={() => setShowT3NewGroup(s => !s)} className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition w-fit">
+                <FolderPlus size={14} /> Yeni Grup Ekle
+              </button>
+
+              <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleT3DragStart} onDragEnd={handleT3DragEnd}>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {t3Groups.map((group, i) => (
+                    <T3EditGroupPanel key={group.id} group={group} colorIdx={i} totalMods={t2Codings.length}
+                      onRename={(id, name) => setT3Groups(prev => prev.map(g => g.id === id ? { ...g, name } : g))}
+                      onDelete={id => setT3Groups(prev => prev.filter(g => g.id !== id))}
+                      onDeleteItem={(groupId, itemId) => setT3Groups(prev => prev.map(g => g.id === groupId ? { ...g, items: g.items.filter(i => i.id !== itemId) } : g))}
+                    />
+                  ))}
+                </div>
+                <DragOverlay>
+                  {t3ActiveItem && <T3ItemCard item={t3ActiveItem} totalMods={t2Codings.length} isDragging />}
+                </DragOverlay>
+              </DndContext>
+            </>
+          )}
+
+          {/* Discussion notes */}
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
             <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
               <MessageSquare size={16} className="text-emerald-600" /> Tartışma Notları
