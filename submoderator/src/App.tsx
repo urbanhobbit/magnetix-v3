@@ -15,7 +15,7 @@ import {
 import { cn } from './lib/utils';
 import type { L1Note, T2Group, T2Coding, CodedItem } from '@shared/types';
 import { MOCK_L1_NOTES } from '@shared/mockData';
-import { saveT2Coding, listSessions, getL1Notes } from '@shared/firestoreService';
+import { saveT2Coding, listSessions, getModeratorT2 } from '@shared/firestoreService';
 import type { Session } from '@shared/types';
 
 // ─── Rule-based categorization ───────────────────────────────────────────────
@@ -226,11 +226,14 @@ export default function App() {
     setSessionName(s.name);
     setLoading(true);
     try {
-      const notes = await getL1Notes(s.id);
-      if (notes.length > 0) {
-        loadAndParse(notes);
+      const modT2 = await getModeratorT2(s.id);
+      if (modT2 && modT2.groups.length > 0) {
+        // Moderatörün T2'sini al, gruplara dönüştür
+        setGroups(modT2.groups);
+        setUnassigned([]);
+        setStep('code');
       } else {
-        // Firestore'da not yok, mock ile devam et (test)
+        // Moderatör henüz kodlamamış — mock ile devam et (test)
         loadAndParse(MOCK_L1_NOTES);
       }
     } catch {

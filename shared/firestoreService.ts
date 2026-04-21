@@ -54,7 +54,18 @@ export async function getL1Notes(sessionId: string): Promise<L1Note[]> {
     .map(({ sessionId: _s, ...rest }: L1Note & { sessionId: string }) => rest as L1Note);
 }
 
-// ─── T2 Codings (SubModerator output) ────────────────────────────────────────
+// ─── Moderator T2 (moderatörün kodlaması — altmodlara dağıtılır) ─────────────
+
+export async function saveModeratorT2(coding: T2Coding): Promise<void> {
+  await setDoc(doc(db, 'moderator_t2_v3', coding.sessionId), { ...coding });
+}
+
+export async function getModeratorT2(sessionId: string): Promise<T2Coding | null> {
+  const snap = await getDoc(doc(db, 'moderator_t2_v3', sessionId));
+  return snap.exists() ? (snap.data() as T2Coding) : null;
+}
+
+// ─── T2 Codings (AltModeratör revizyonları) ──────────────────────────────────
 
 export async function saveT2Coding(coding: T2Coding): Promise<void> {
   const id = `${coding.sessionId}_${coding.subModName.replace(/\s+/g, '_')}`;
@@ -67,7 +78,7 @@ export async function getT2Codings(sessionId: string): Promise<T2Coding[]> {
   return all.filter((c: T2Coding) => c.sessionId === sessionId);
 }
 
-// ─── T3 Final (Moderator output) ─────────────────────────────────────────────
+// ─── T3 Final (Moderator consensus sonucu) ────────────────────────────────────
 
 export async function saveT3Final(final: T3Final): Promise<void> {
   await setDoc(doc(db, 't3_final_v3', final.sessionId), final);

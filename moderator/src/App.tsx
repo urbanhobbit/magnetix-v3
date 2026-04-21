@@ -1,45 +1,93 @@
 import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  LogIn, Upload, RefreshCw, CheckCircle, Users,
-  Save, Plus, ChevronDown, ChevronRight, MessageSquare, BarChart2, Trash2,
-  LayoutList, LayoutGrid,
+  DndContext, DragOverlay, closestCorners,
+  PointerSensor, useSensor, useSensors,
+  type DragStartEvent, type DragEndEvent,
+} from '@dnd-kit/core';
+import { useDroppable } from '@dnd-kit/core';
+import { useSortable, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
+  LogIn, Upload, Download, RefreshCw, CheckCircle, Users,
+  Save, Plus, ChevronDown, ChevronRight, MessageSquare, BarChart2,
+  LayoutList, LayoutGrid, FolderPlus, GripVertical, Pencil, Check, X, Trash2,
 } from 'lucide-react';
 import { cn } from './lib/utils';
-import type { Session, L1Note, T2Coding, T2Group, T3Group, T3Item, T3Final } from '@shared/types';
-import { MOCK_T2_CODINGS } from '@shared/mockData';
+import type {
+  Session, L1Note, T2Coding, T2Group, T3Group, T3Item, T3Final, CodedItem,
+} from '@shared/types';
+import { MOCK_L1_NOTES, MOCK_T2_CODINGS } from '@shared/mockData';
 import {
   createSession, listSessions, updateSessionStatus,
-  saveL1Note, getL1Notes, getT2Codings, saveT3Final,
+  getL1Notes, getT2Codings, saveT3Final,
+  saveModeratorT2, getModeratorT2,
 } from '@shared/firestoreService';
+
+// ─── Rule-based categorization (same as submoderator) ────────────────────────
+
+const CATEGORY_RULES: { pattern: RegExp; category: string; group: string }[] = [
+  { pattern: /barınma|konut|kira|elektrik|su fatura|ısınma|gıda|besin|beslenme|öğün|giyim|kıyafet|temel yaşam|maddi/i, category: 'Temel İhtiyaçlar', group: 'Temel Yaşam ve Maddi Güvenlik' },
+  { pattern: /eğitim|okul|ders|müfredat|öğretmen|rehberlik|akademik|sınav|okul öncesi|kapsayıcı/i, category: 'Eğitim', group: 'Eğitim ve Okul Yaşamı' },
+  { pattern: /sağlık|hastalık|ilaç|rehabilitasyon|engelli|diş|göz|hijyen|bakım malzeme/i, category: 'Sağlık', group: 'Sağlık ve Psikososyal İyi Oluş' },
+  { pattern: /psikosos|psikoloj|ruh sağlığı|danışmanlık|kriz|akran|sosyal etkileşim|ergenlik|menstrüasyon/i, category: 'Sağlık', group: 'Sağlık ve Psikososyal İyi Oluş' },
+  { pattern: /internet|dijital|bilgisayar|tablet|teknoloji|yazılım|online|uzaktan eğitim|siber|stem|programlama/i, category: 'Teknoloji', group: 'Dijital Erişim ve Teknoloji' },
+  { pattern: /güvenlik|koruma|istismar|ihmal|şiddet|zorbalık|taciz|erken evlilik|çocuk işçi|afet|acil/i, category: 'Güvenlik', group: 'Güvenlik ve Koruma' },
+  { pattern: /hukuk|hak|kimlik|belge|ayrımcılık|katılım|meclis|şikayet|burs|kariyer|meslek/i, category: 'Haklar ve Katılım', group: 'Haklar, Katılım ve Gelecek' },
+  { pattern: /aile|ebeveyn|bakımveren|tek ebeveyn|akraba|mülteci|göçmen|sosyal hizmet|sosyal yardım/i, category: 'Aile ve Sosyal Destek', group: 'Aile ve Bakımveren Desteği' },
+  { pattern: /ulaşım|taşıma|servis|yol|toplu taşıma/i, category: 'Altyapı', group: 'Ulaşım ve Erişim' },
+  { pattern: /oyun|spor|kültür|sanat|boş zaman|etkinlik|sosyal katılım/i, category: 'Sosyal', group: 'Sosyal Katılım ve Boş Zaman' },
+];
+
+function categorizeText(text: string): { category: string; group: string } {
+  for (const rule of CATEGORY_RULES) {
+    if (rule.pattern.test(text)) return { category: rule.category, group: rule.group };
+  }
+  return { category: 'Diğer', group: 'Sınıflandırılmamış' };
+}
+
+function parseL1Notes(notes: L1Note[]): CodedItem[] {
+  const seen = new Set<string>();
+  const items: CodedItem[] = [];
+  for (const note of notes) {
+    const lines = note.text.split('\n').map((l: string) => l.replace(/^[-•*]\s*/, '').trim()).filter((l: string) => l.length > 3 && !/^[A-ZÇĞİÖŞÜa-zçğışöüA-Z ]+:$/.test(l));
+    for (const line of lines) {
+      const key = line.toLowerCase().replace(/\s+/g, ' ');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const { category, group } = categorizeText(line);
+      items.push({ id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, text: line, originalText: line, expertName: note.expertName, category, group });
+    }
+  }
+  return items;
+}
+
+function groupItems(items: CodedItem[]): T2Group[] {
+  const map = new Map<string, T2Group>();
+  for (const item of items) {
+    const key = item.group;
+    if (!map.has(key)) map.set(key, { id: `group_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: key, category: item.category, items: [] });
+    map.get(key)!.items.push(item);
+  }
+  return Array.from(map.values());
+}
 
 // ─── Consensus computation ────────────────────────────────────────────────────
 
 function computeConsensus(codings: T2Coding[]): T3Group[] {
   if (codings.length === 0) return [];
   const total = codings.length;
-
-  // Collect all group names across codings
   const groupNames = new Set<string>();
   for (const c of codings) for (const g of c.groups) groupNames.add(g.name);
-
   const t3Groups: T3Group[] = [];
-
   for (const groupName of groupNames) {
-    // How many sub-mods have this group?
     const subModsWithGroup = codings.filter(c => c.groups.some(g => g.name === groupName));
     const groupConsensus = subModsWithGroup.length / total;
-
-    // Collect all items from all sub-mods for this group
     const allItems: { text: string; expertName: string; subMod: string }[] = [];
     for (const c of subModsWithGroup) {
       const grp = c.groups.find(g => g.name === groupName)!;
-      for (const item of grp.items) {
-        allItems.push({ text: item.text, expertName: item.expertName, subMod: c.subModName });
-      }
+      for (const item of grp.items) allItems.push({ text: item.text, expertName: item.expertName, subMod: c.subModName });
     }
-
-    // Deduplicate items by normalized text, compute per-item consensus
     const itemMap = new Map<string, { text: string; expertNames: Set<string>; subMods: Set<string> }>();
     for (const it of allItems) {
       const key = it.text.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -47,7 +95,6 @@ function computeConsensus(codings: T2Coding[]): T3Group[] {
       itemMap.get(key)!.expertNames.add(it.expertName);
       itemMap.get(key)!.subMods.add(it.subMod);
     }
-
     const t3Items: T3Item[] = Array.from(itemMap.values()).map(v => ({
       id: `t3item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       text: v.text,
@@ -55,20 +102,113 @@ function computeConsensus(codings: T2Coding[]): T3Group[] {
       consensusScore: v.subMods.size / total,
       subModSources: Array.from(v.subMods),
     })).sort((a, b) => b.consensusScore - a.consensusScore);
-
-    // Get category from first sub-mod
     const category = subModsWithGroup[0].groups.find(g => g.name === groupName)?.category || 'Diğer';
-
-    t3Groups.push({
-      id: `t3grp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: groupName,
-      category,
-      items: t3Items,
-      consensusScore: groupConsensus,
-    });
+    t3Groups.push({ id: `t3grp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, name: groupName, category, items: t3Items, consensusScore: groupConsensus });
   }
-
   return t3Groups.sort((a, b) => b.consensusScore - a.consensusScore);
+}
+
+// ─── Colors ──────────────────────────────────────────────────────────────────
+
+const COLORS = [
+  { bg: 'bg-blue-50', border: 'border-blue-200', header: 'bg-blue-100', text: 'text-blue-800', badge: 'bg-blue-200 text-blue-800' },
+  { bg: 'bg-emerald-50', border: 'border-emerald-200', header: 'bg-emerald-100', text: 'text-emerald-800', badge: 'bg-emerald-200 text-emerald-800' },
+  { bg: 'bg-amber-50', border: 'border-amber-200', header: 'bg-amber-100', text: 'text-amber-800', badge: 'bg-amber-200 text-amber-800' },
+  { bg: 'bg-purple-50', border: 'border-purple-200', header: 'bg-purple-100', text: 'text-purple-800', badge: 'bg-purple-200 text-purple-800' },
+  { bg: 'bg-rose-50', border: 'border-rose-200', header: 'bg-rose-100', text: 'text-rose-800', badge: 'bg-rose-200 text-rose-800' },
+  { bg: 'bg-cyan-50', border: 'border-cyan-200', header: 'bg-cyan-100', text: 'text-cyan-800', badge: 'bg-cyan-200 text-cyan-800' },
+  { bg: 'bg-orange-50', border: 'border-orange-200', header: 'bg-orange-100', text: 'text-orange-800', badge: 'bg-orange-200 text-orange-800' },
+  { bg: 'bg-indigo-50', border: 'border-indigo-200', header: 'bg-indigo-100', text: 'text-indigo-800', badge: 'bg-indigo-200 text-indigo-800' },
+];
+
+// ─── Coding board sub-components ─────────────────────────────────────────────
+
+function ItemCard({ item, colorIdx, isDragging }: { item: CodedItem; colorIdx: number; isDragging?: boolean }) {
+  const color = COLORS[colorIdx % COLORS.length];
+  return (
+    <div className={cn('rounded-lg border bg-white px-3 py-2 text-sm shadow-sm', color.border, isDragging && 'opacity-50')}>
+      <p className="text-gray-800 leading-snug">{item.text}</p>
+      <p className="text-xs text-gray-400 mt-1">{item.expertName}</p>
+    </div>
+  );
+}
+
+function SortableItemCard({ item, colorIdx }: { item: CodedItem; colorIdx: number }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <div ref={setNodeRef} style={style} className={cn('flex items-start gap-1', isDragging && 'opacity-40')}>
+      <button {...attributes} {...listeners} className="mt-1 cursor-grab text-gray-300 hover:text-gray-500 shrink-0"><GripVertical size={14} /></button>
+      <div className="flex-1"><ItemCard item={item} colorIdx={colorIdx} /></div>
+    </div>
+  );
+}
+
+function GroupPanel({ group, colorIdx, onRename, onDelete, onDeleteItem }: {
+  group: T2Group; colorIdx: number;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
+  onDeleteItem: (groupId: string, itemId: string) => void;
+}) {
+  const color = COLORS[colorIdx % COLORS.length];
+  const [collapsed, setCollapsed] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [nameText, setNameText] = useState(group.name);
+  const { setNodeRef, isOver } = useDroppable({ id: group.id });
+  return (
+    <motion.div layout ref={setNodeRef} className={cn('rounded-xl border overflow-hidden transition-all', color.border, color.bg, isOver && 'ring-2 ring-blue-400 ring-offset-1')}>
+      <div className={cn('flex items-center gap-2 px-3 py-2', color.header)}>
+        <button onClick={() => setCollapsed(c => !c)} className="shrink-0">{collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}</button>
+        {renaming ? (
+          <div className="flex flex-1 gap-1">
+            <input className="flex-1 rounded border px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" value={nameText} onChange={e => setNameText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { onRename(group.id, nameText); setRenaming(false); } if (e.key === 'Escape') setRenaming(false); }} autoFocus />
+            <button onClick={() => { onRename(group.id, nameText); setRenaming(false); }} className="text-green-600"><Check size={14} /></button>
+          </div>
+        ) : (
+          <div className="flex flex-1 items-center justify-between min-w-0">
+            <div className="min-w-0">
+              <span className={cn('font-semibold text-sm truncate block', color.text)}>{group.name}</span>
+              <span className="text-xs text-gray-400">{group.category}</span>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <span className={cn('text-xs rounded-full px-2 py-0.5 font-medium', color.badge)}>{group.items.length}</span>
+              <button onClick={() => { setNameText(group.name); setRenaming(true); }} className="p-0.5 text-gray-400 hover:text-gray-700"><Pencil size={12} /></button>
+              <button onClick={() => onDelete(group.id)} className="p-0.5 text-red-400 hover:text-red-600"><Trash2 size={12} /></button>
+            </div>
+          </div>
+        )}
+      </div>
+      <AnimatePresence>
+        {!collapsed && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="px-2 pb-2">
+            <SortableContext items={group.items.map(i => i.id)} strategy={verticalListSortingStrategy}>
+              <div className={cn('space-y-1.5 mt-2 min-h-[40px] rounded-lg', group.items.length === 0 && 'border-2 border-dashed border-gray-300 flex items-center justify-center py-3')}>
+                {group.items.length === 0 ? <span className="text-xs text-gray-400">Buraya kart sürükleyin</span> : group.items.map(item => (
+                  <div key={item.id} className="flex items-start gap-1">
+                    <div className="flex-1"><SortableItemCard item={item} colorIdx={colorIdx} /></div>
+                    <button onClick={() => onDeleteItem(group.id, item.id)} className="mt-1 p-0.5 text-red-300 hover:text-red-500 shrink-0"><X size={12} /></button>
+                  </div>
+                ))}
+              </div>
+            </SortableContext>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+function UnassignedPool({ items }: { items: CodedItem[] }) {
+  const { setNodeRef, isOver } = useDroppable({ id: 'unassigned' });
+  return (
+    <div ref={setNodeRef} className={cn('rounded-xl border-2 border-dashed border-gray-300 p-2 min-h-[100px] transition-colors', isOver && 'border-blue-400 bg-blue-50')}>
+      <SortableContext items={items.map(i => i.id)} strategy={verticalListSortingStrategy}>
+        <div className="space-y-1.5">
+          {items.map(item => <SortableItemCard key={item.id} item={item} colorIdx={7} />)}
+        </div>
+      </SortableContext>
+    </div>
+  );
 }
 
 // ─── Consensus badge ──────────────────────────────────────────────────────────
@@ -84,7 +224,7 @@ function ConsensusBadge({ score, total }: { score: number; total: number }) {
   );
 }
 
-// ─── Consensus Grid (Grup × AltMod matrix) ───────────────────────────────────
+// ─── Consensus Grid ───────────────────────────────────────────────────────────
 
 function scoreColor(score: number): string {
   if (score >= 0.8) return 'bg-green-500';
@@ -94,42 +234,25 @@ function scoreColor(score: number): string {
   return 'bg-gray-100';
 }
 
-function scoreBg(score: number): string {
-  if (score >= 0.8) return 'bg-green-50 border-green-200';
-  if (score >= 0.6) return 'bg-emerald-50 border-emerald-200';
-  if (score >= 0.4) return 'bg-amber-50 border-amber-200';
-  if (score > 0)    return 'bg-rose-50 border-rose-200';
-  return 'bg-gray-50 border-gray-200';
-}
-
 function ConsensusGrid({ groups, codings }: { groups: T3Group[]; codings: T2Coding[] }) {
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const subMods = codings.map(c => c.subModName);
   const total = codings.length;
-
   if (total === 0 || groups.length === 0) return null;
-
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-      {/* Legend */}
       <div className="flex items-center gap-4 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-500 flex-wrap">
         <span className="font-medium">Consensus:</span>
-        {[['≥80%', 'bg-green-500'], ['60-79%', 'bg-emerald-400'], ['40-59%', 'bg-amber-400'], ['<40%', 'bg-rose-400'], ['Yok', 'bg-gray-200']].map(([label, cls]) => (
+        {[['≥80%', 'bg-green-500'], ['60-79%', 'bg-emerald-400'], ['40-59%', 'bg-amber-400'], ['<40%', 'bg-rose-400']].map(([label, cls]) => (
           <span key={label} className="flex items-center gap-1"><span className={`w-3 h-3 rounded-sm inline-block ${cls}`} />{label}</span>
         ))}
       </div>
-
-      {/* Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="bg-gray-50">
-              <th className="text-left px-4 py-2 font-semibold text-gray-700 border-b border-r border-gray-200 min-w-[200px] sticky left-0 bg-gray-50 z-10">
-                Grup
-              </th>
-              <th className="px-3 py-2 font-semibold text-gray-700 border-b border-r border-gray-200 text-center min-w-[80px]">
-                Consensus
-              </th>
+              <th className="text-left px-4 py-2 font-semibold text-gray-700 border-b border-r border-gray-200 min-w-[200px] sticky left-0 bg-gray-50 z-10">Grup</th>
+              <th className="px-3 py-2 font-semibold text-gray-700 border-b border-r border-gray-200 text-center min-w-[80px]">Consensus</th>
               {subMods.map(sm => (
                 <th key={sm} className="px-3 py-2 font-medium text-gray-600 border-b border-r border-gray-200 text-center min-w-[90px] last:border-r-0">
                   <span className="block truncate max-w-[80px] mx-auto" title={sm}>{sm}</span>
@@ -141,15 +264,9 @@ function ConsensusGrid({ groups, codings }: { groups: T3Group[]; codings: T2Codi
             {groups.map((group, i) => {
               const isExpanded = expandedGroup === group.id;
               const pct = Math.round(group.consensusScore * 100);
-
               return (
                 <>
-                  <tr
-                    key={group.id}
-                    className={cn('border-b border-gray-100 cursor-pointer hover:bg-violet-50 transition-colors', i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50')}
-                    onClick={() => setExpandedGroup(isExpanded ? null : group.id)}
-                  >
-                    {/* Group name */}
+                  <tr key={group.id} className={cn('border-b border-gray-100 cursor-pointer hover:bg-violet-50 transition-colors', i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50')} onClick={() => setExpandedGroup(isExpanded ? null : group.id)}>
                     <td className={cn('px-4 py-2.5 border-r border-gray-200 sticky left-0 z-10', i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50')}>
                       <div className="flex items-center gap-2">
                         <div className={cn('w-1 h-8 rounded-full shrink-0', scoreColor(group.consensusScore))} />
@@ -160,62 +277,33 @@ function ConsensusGrid({ groups, codings }: { groups: T3Group[]; codings: T2Codi
                         <span className="ml-auto text-gray-300 shrink-0">{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
                       </div>
                     </td>
-
-                    {/* Overall consensus */}
                     <td className="px-3 py-2.5 border-r border-gray-200 text-center">
-                      <span className={cn('inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold',
-                        group.consensusScore >= 0.8 ? 'bg-green-100 text-green-700' :
-                        group.consensusScore >= 0.6 ? 'bg-emerald-100 text-emerald-700' :
-                        group.consensusScore >= 0.4 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'
-                      )}>
-                        {pct}%
-                      </span>
+                      <span className={cn('inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold', group.consensusScore >= 0.8 ? 'bg-green-100 text-green-700' : group.consensusScore >= 0.6 ? 'bg-emerald-100 text-emerald-700' : group.consensusScore >= 0.4 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700')}>{pct}%</span>
                     </td>
-
-                    {/* Per-submod cells */}
                     {subMods.map(sm => {
                       const coding = codings.find(c => c.subModName === sm);
                       const grp = coding?.groups.find(g => g.name === group.name);
-                      const has = !!grp;
-                      const count = grp?.items.length ?? 0;
                       return (
                         <td key={sm} className="px-3 py-2.5 border-r border-gray-200 last:border-r-0 text-center">
-                          {has ? (
-                            <div className="flex flex-col items-center gap-0.5">
-                              <span className="text-green-600 font-bold text-base leading-none">✓</span>
-                              <span className="text-xs text-gray-400">{count} madde</span>
-                            </div>
-                          ) : (
-                            <span className="text-gray-200 text-lg">—</span>
-                          )}
+                          {grp ? <div className="flex flex-col items-center gap-0.5"><span className="text-green-600 font-bold text-base leading-none">✓</span><span className="text-xs text-gray-400">{grp.items.length} madde</span></div> : <span className="text-gray-200 text-lg">—</span>}
                         </td>
                       );
                     })}
                   </tr>
-
-                  {/* Expanded: item detail rows */}
                   {isExpanded && group.items.map(item => (
                     <tr key={item.id} className="border-b border-gray-100 bg-violet-50/40">
-                      <td className={cn('pl-10 pr-4 py-2 border-r border-gray-200 sticky left-0 bg-violet-50/40 z-10')}>
+                      <td className="pl-10 pr-4 py-2 border-r border-gray-200 sticky left-0 bg-violet-50/40 z-10">
                         <p className="text-xs text-gray-700 leading-snug">{item.text}</p>
                         <p className="text-xs text-gray-400 mt-0.5">{item.expertNames.join(', ')}</p>
                       </td>
                       <td className="px-3 py-2 border-r border-gray-200 text-center">
-                        <span className={cn('inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-medium',
-                          item.consensusScore >= 0.8 ? 'bg-green-100 text-green-700' :
-                          item.consensusScore >= 0.5 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'
-                        )}>
-                          {Math.round(item.consensusScore * 100)}%
-                        </span>
+                        <span className={cn('inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-medium', item.consensusScore >= 0.8 ? 'bg-green-100 text-green-700' : item.consensusScore >= 0.5 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700')}>{Math.round(item.consensusScore * 100)}%</span>
                       </td>
-                      {subMods.map(sm => {
-                        const has = item.subModSources.includes(sm);
-                        return (
-                          <td key={sm} className="px-3 py-2 border-r border-gray-200 last:border-r-0 text-center">
-                            {has ? <span className="text-green-500 text-sm">✓</span> : <span className="text-gray-200 text-sm">—</span>}
-                          </td>
-                        );
-                      })}
+                      {subMods.map(sm => (
+                        <td key={sm} className="px-3 py-2 border-r border-gray-200 last:border-r-0 text-center">
+                          {item.subModSources.includes(sm) ? <span className="text-green-500 text-sm">✓</span> : <span className="text-gray-200 text-sm">—</span>}
+                        </td>
+                      ))}
                     </tr>
                   ))}
                 </>
@@ -230,23 +318,13 @@ function ConsensusGrid({ groups, codings }: { groups: T3Group[]; codings: T2Codi
 
 // ─── T3 Group Panel ───────────────────────────────────────────────────────────
 
-function T3GroupPanel({ group, totalMods, onUpdateNotes }: {
-  group: T3Group;
-  totalMods: number;
-  onUpdateNotes: (groupId: string, notes: string) => void;
-}) {
+function T3GroupPanel({ group, totalMods }: { group: T3Group; totalMods: number }) {
   const [collapsed, setCollapsed] = useState(false);
   const [showItems, setShowItems] = useState(true);
   const alpha = Math.max(0.3, group.consensusScore);
-
   return (
     <motion.div layout className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
-      {/* Group header */}
-      <div
-        className="flex items-center gap-2 px-4 py-3 cursor-pointer select-none"
-        style={{ backgroundColor: `rgba(109, 40, 217, ${alpha * 0.12})`, borderLeft: `4px solid rgba(109, 40, 217, ${alpha})` }}
-        onClick={() => setCollapsed(c => !c)}
-      >
+      <div className="flex items-center gap-2 px-4 py-3 cursor-pointer select-none" style={{ backgroundColor: `rgba(109,40,217,${alpha * 0.12})`, borderLeft: `4px solid rgba(109,40,217,${alpha})` }} onClick={() => setCollapsed(c => !c)}>
         <button className="shrink-0 text-gray-400">{collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}</button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -257,12 +335,10 @@ function T3GroupPanel({ group, totalMods, onUpdateNotes }: {
           <div className="text-xs text-gray-400 mt-0.5">{group.items.length} madde</div>
         </div>
       </div>
-
       <AnimatePresence>
         {!collapsed && (
           <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
             <div className="px-4 pb-4">
-              {/* Items */}
               <button onClick={() => setShowItems(s => !s)} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 mt-3 mb-2">
                 <BarChart2 size={12} /> {showItems ? 'Maddeleri Gizle' : 'Maddeleri Göster'} ({group.items.length})
               </button>
@@ -294,7 +370,7 @@ function T3GroupPanel({ group, totalMods, onUpdateNotes }: {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-type Step = 'login' | 'sessions' | 'manage' | 'review' | 'done';
+type Step = 'login' | 'sessions' | 'manage' | 'code' | 'review' | 'done';
 
 export default function App() {
   const [step, setStep] = useState<Step>('login');
@@ -309,7 +385,16 @@ export default function App() {
   const [newSessionName, setNewSessionName] = useState('');
   const [filterThreshold, setFilterThreshold] = useState(0);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('grid');
-  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Coding board state (moderatör T2 oluşturma)
+  const [codeGroups, setCodeGroups] = useState<T2Group[]>([]);
+  const [unassigned, setUnassigned] = useState<CodedItem[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [showNewGroup, setShowNewGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const offlineImportRef = useRef<HTMLInputElement>(null);
   const t2FileRef = useRef<HTMLInputElement>(null);
 
   const refreshSessions = async () => {
@@ -333,7 +418,6 @@ export default function App() {
       setNewSessionName('');
     } catch (e) {
       console.error(e);
-      // Fallback: create locally
       const s: Session = { id: `session_${Date.now()}`, name: newSessionName.trim(), createdBy: modName, createdAt: new Date().toISOString(), status: 'l1' };
       setSessions(prev => [...prev, s]);
       setNewSessionName('');
@@ -344,10 +428,7 @@ export default function App() {
   const handleSelectSession = async (s: Session) => {
     setSelectedSession(s);
     setLoading(true);
-    try {
-      const notes = await getL1Notes(s.id);
-      setL1Notes(notes);
-    } catch { setL1Notes([]); }
+    try { setL1Notes(await getL1Notes(s.id)); } catch { setL1Notes([]); }
     try {
       const codings = await getT2Codings(s.id);
       setT2Codings(codings);
@@ -356,6 +437,100 @@ export default function App() {
     setLoading(false);
     setStep('manage');
   };
+
+  // ── Kodlama board helpers ────────────────────────────────────────────────
+
+  const initCodingBoard = (notes: L1Note[]) => {
+    const items = parseL1Notes(notes);
+    setCodeGroups(groupItems(items));
+    setUnassigned([]);
+    setStep('code');
+  };
+
+  const allCodeItems = [...codeGroups.flatMap(g => g.items), ...unassigned];
+  const activeItem = activeId ? allCodeItems.find(i => i.id === activeId) : null;
+
+  function findContainer(itemId: string): string {
+    for (const g of codeGroups) if (g.items.some(i => i.id === itemId)) return g.id;
+    return 'unassigned';
+  }
+
+  const handleDragStart = (e: DragStartEvent) => setActiveId(e.active.id as string);
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    setActiveId(null);
+    const { active, over } = e;
+    if (!over) return;
+    const activeContainer = findContainer(active.id as string);
+    let overContainer: string;
+    if (codeGroups.some(g => g.id === over.id)) overContainer = over.id as string;
+    else if (over.id === 'unassigned') overContainer = 'unassigned';
+    else overContainer = findContainer(over.id as string);
+    if (activeContainer === overContainer) return;
+    let movedItem: CodedItem | undefined;
+    setCodeGroups(prev => {
+      let newGroups = prev.map(g => {
+        if (g.id === activeContainer) {
+          const idx = g.items.findIndex(i => i.id === active.id);
+          if (idx >= 0) { movedItem = g.items[idx]; return { ...g, items: g.items.filter(i => i.id !== active.id) }; }
+        }
+        return g;
+      });
+      setUnassigned(prevU => {
+        let newU = [...prevU];
+        if (activeContainer === 'unassigned') {
+          const idx = newU.findIndex(i => i.id === active.id);
+          if (idx >= 0) { movedItem = newU[idx]; newU = newU.filter(i => i.id !== active.id); }
+        }
+        if (!movedItem) return prevU;
+        if (overContainer === 'unassigned') return [...newU, movedItem];
+        newGroups = newGroups.map(g => g.id === overContainer ? { ...g, items: [...g.items, movedItem!] } : g);
+        setCodeGroups(newGroups);
+        return newU;
+      });
+      return newGroups;
+    });
+  };
+
+  // ── T2 kaydet (online) ───────────────────────────────────────────────────
+
+  const handleSaveModeratorT2 = async (andExport = false) => {
+    if (!selectedSession) return;
+    setLoading(true);
+    const coding: T2Coding = {
+      sessionId: selectedSession.id,
+      subModName: modName,
+      codedAt: new Date().toISOString(),
+      items: allCodeItems,
+      groups: codeGroups,
+    };
+    try { await saveModeratorT2(coding); } catch (e) { console.error(e); }
+    if (andExport) {
+      const blob = new Blob([JSON.stringify(coding, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `t2_moderator_${selectedSession.id}.json`; a.click();
+      URL.revokeObjectURL(url);
+    }
+    setLoading(false);
+    setStep('manage');
+  };
+
+  // ── Offline JSON import/export ───────────────────────────────────────────
+
+  const handleOfflineImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target?.result as string);
+        const notes: L1Note[] = Array.isArray(data) ? data : data.notes || data.l1Notes || [];
+        initCodingBoard(notes);
+      } catch { alert('Geçersiz JSON dosyası.'); }
+    };
+    reader.readAsText(f);
+  };
+
+  // ── AltMod T2 revizyonları import ────────────────────────────────────────
 
   const handleT2Import = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
@@ -381,13 +556,7 @@ export default function App() {
   const handleSaveT3 = async () => {
     if (!selectedSession || t3Groups.length === 0) return;
     setLoading(true);
-    const final: T3Final = {
-      sessionId: selectedSession.id,
-      moderatorName: modName,
-      savedAt: new Date().toISOString(),
-      groups: t3Groups,
-      notes: discussionNotes,
-    };
+    const final: T3Final = { sessionId: selectedSession.id, moderatorName: modName, savedAt: new Date().toISOString(), groups: t3Groups, notes: discussionNotes };
     try {
       await saveT3Final(final);
       await updateSessionStatus(selectedSession.id, 'done');
@@ -395,7 +564,6 @@ export default function App() {
       console.error(e);
       localStorage.setItem(`t3_${selectedSession.id}`, JSON.stringify(final));
     }
-    // JSON download
     const blob = new Blob([JSON.stringify(final, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = `t3_final_${selectedSession.id}.json`; a.click();
@@ -411,9 +579,7 @@ export default function App() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50 flex items-center justify-center p-4">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
-            <div className="w-14 h-14 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Users size={28} className="text-emerald-600" />
-            </div>
+            <div className="w-14 h-14 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4"><Users size={28} className="text-emerald-600" /></div>
             <h1 className="text-2xl font-bold text-gray-900">MagnetiX</h1>
             <p className="text-gray-500 mt-1">Moderatör Girişi</p>
           </div>
@@ -442,15 +608,12 @@ export default function App() {
               </div>
               <button onClick={refreshSessions} className="p-2 text-gray-400 hover:text-gray-700"><RefreshCw size={16} /></button>
             </div>
-
-            {/* Create session */}
             <div className="flex gap-2 mb-4">
               <input className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="Yeni oturum adı..." value={newSessionName} onChange={e => setNewSessionName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateSession()} />
               <button onClick={handleCreateSession} disabled={!newSessionName.trim() || loading} className="flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition">
                 <Plus size={14} /> Oluştur
               </button>
             </div>
-
             {sessions.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-8">Henüz oturum yok. Yukarıdan oluşturun.</p>
             ) : (
@@ -484,19 +647,15 @@ export default function App() {
               <h2 className="text-xl font-bold text-gray-900">{selectedSession?.name}</h2>
             </div>
 
-            {/* T1 section */}
+            {/* T1 — Uzman Notları */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 mb-4">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="font-semibold text-gray-900">T1 — Uzman Notları</h3>
-                <span className="text-xs text-gray-400">
-                  {l1Notes.length > 0 ? `${l1Notes.length} uzman` : 'Not yok'}
-                </span>
+                <span className="text-xs text-gray-400">{l1Notes.length > 0 ? `${l1Notes.length} uzman` : 'Not yok'}</span>
               </div>
-              {l1Notes.length === 0 && (
-                <p className="text-sm text-gray-400">Firestore'da bu oturum için henüz uzman notu bulunamadı.</p>
-              )}
+              {l1Notes.length === 0 && <p className="text-sm text-gray-400 mb-3">Firestore'da bu oturum için henüz uzman notu bulunamadı.</p>}
               {l1Notes.length > 0 && (
-                <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                <div className="space-y-3 max-h-64 overflow-y-auto pr-1 mb-3">
                   {l1Notes.map(note => (
                     <div key={note.id} className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
                       <div className="flex items-center gap-2 mb-1">
@@ -508,16 +667,35 @@ export default function App() {
                   ))}
                 </div>
               )}
-              <p className="text-xs text-gray-400 mt-2">AltModeratörler bu oturumu seçtiğinde notları otomatik olarak alır.</p>
+
+              {/* T2 oluşturma seçenekleri */}
+              <div className="border-t border-gray-100 pt-3 mt-1">
+                <p className="text-xs font-medium text-gray-500 mb-2">T2 Kodlaması Oluştur:</p>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={() => l1Notes.length > 0 ? initCodingBoard(l1Notes) : initCodingBoard(MOCK_L1_NOTES)}
+                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition"
+                  >
+                    <BarChart2 size={13} /> Online Kodla
+                  </button>
+                  <button
+                    onClick={() => offlineImportRef.current?.click()}
+                    className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition"
+                  >
+                    <Upload size={13} /> Offline JSON Yükle
+                  </button>
+                  <input ref={offlineImportRef} type="file" accept=".json" className="hidden" onChange={handleOfflineImport} />
+                </div>
+              </div>
             </div>
 
-            {/* T2 section */}
+            {/* T2 — AltModeratör Revizyonları */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 mb-4">
-              <h3 className="font-semibold text-gray-900 mb-1">T2 — AltModeratör Kodlamaları</h3>
+              <h3 className="font-semibold text-gray-900 mb-1">T2 — AltModeratör Revizyonları</h3>
               <p className="text-sm text-gray-400 mb-3">
                 {t2Codings.length > 0
                   ? `${t2Codings.length} altmoderatör: ${t2Codings.map(c => c.subModName).join(', ')}`
-                  : 'Henüz kodlama yok.'}
+                  : 'Henüz revizyon yok. AltModeratörler Firestore\'dan otomatik alır.'}
               </p>
               <div className="flex gap-2 flex-wrap">
                 <button onClick={() => t2FileRef.current?.click()} className="flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700 transition">
@@ -525,7 +703,7 @@ export default function App() {
                 </button>
                 <input ref={t2FileRef} type="file" accept=".json" multiple className="hidden" onChange={handleT2Import} />
                 <button onClick={loadMockT2} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition">
-                  Mock T2 Yükle (2 altmod)
+                  Mock T2 Yükle (test)
                 </button>
                 {t2Codings.length > 0 && (
                   <button onClick={() => setStep('review')} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition">
@@ -540,16 +718,80 @@ export default function App() {
     );
   }
 
-  // ── Review / Consensus ────────────────────────────────────────────────────
+  // ── Coding board (Moderatör T2 oluşturma) ────────────────────────────────
 
-  if (step === 'review') {
-    const filtered = filterThreshold > 0
-      ? t3Groups.filter(g => g.consensusScore >= filterThreshold / 100)
-      : t3Groups;
-
+  if (step === 'code') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50">
         {/* Header */}
+        <div className="bg-white border-b border-gray-200 sticky top-0 z-20 px-4 py-3 flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-lg font-bold text-gray-900">T2 Kodlama</h1>
+            <p className="text-xs text-gray-400">{modName} · {selectedSession?.name} · {codeGroups.reduce((s, g) => s + g.items.length, 0) + unassigned.length} madde</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowNewGroup(s => !s)} className="flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition">
+              <FolderPlus size={14} /> Yeni Grup
+            </button>
+            <button onClick={() => handleSaveModeratorT2(true)} disabled={loading} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition">
+              <Download size={13} /> Offline Export
+            </button>
+            <button onClick={() => handleSaveModeratorT2(false)} disabled={loading} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition">
+              {loading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Kaydet & Yayınla
+            </button>
+          </div>
+        </div>
+
+        {/* New group input */}
+        <AnimatePresence>
+          {showNewGroup && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="bg-emerald-50 border-b border-emerald-100 px-4 py-2 flex gap-2">
+              <input className="flex-1 rounded-lg border border-emerald-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="Yeni grup adı..." value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newGroupName.trim()) { setCodeGroups(prev => [...prev, { id: `grp_${Date.now()}`, name: newGroupName.trim(), category: 'Özel', items: [] }]); setNewGroupName(''); setShowNewGroup(false); }
+                  if (e.key === 'Escape') setShowNewGroup(false);
+                }} autoFocus />
+              <button onClick={() => { if (newGroupName.trim()) { setCodeGroups(prev => [...prev, { id: `grp_${Date.now()}`, name: newGroupName.trim(), category: 'Özel', items: [] }]); setNewGroupName(''); setShowNewGroup(false); } }} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">Ekle</button>
+              <button onClick={() => setShowNewGroup(false)} className="p-1.5 text-gray-400 hover:text-gray-700"><X size={14} /></button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+          <div className="flex gap-4 p-4 overflow-x-auto">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Gruplar ({codeGroups.length})</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {codeGroups.map((group, i) => (
+                  <GroupPanel key={group.id} group={group} colorIdx={i}
+                    onRename={(id, name) => setCodeGroups(prev => prev.map(g => g.id === id ? { ...g, name } : g))}
+                    onDelete={id => setCodeGroups(prev => prev.filter(g => g.id !== id))}
+                    onDeleteItem={(groupId, itemId) => setCodeGroups(prev => prev.map(g => g.id === groupId ? { ...g, items: g.items.filter(i => i.id !== itemId) } : g))}
+                  />
+                ))}
+              </div>
+            </div>
+            {unassigned.length > 0 && (
+              <div className="w-72 shrink-0">
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Atanmamış ({unassigned.length})</h3>
+                <UnassignedPool items={unassigned} />
+              </div>
+            )}
+          </div>
+          <DragOverlay>
+            {activeItem && <ItemCard item={activeItem} colorIdx={0} />}
+          </DragOverlay>
+        </DndContext>
+      </div>
+    );
+  }
+
+  // ── Review / Consensus ────────────────────────────────────────────────────
+
+  if (step === 'review') {
+    const filtered = filterThreshold > 0 ? t3Groups.filter(g => g.consensusScore >= filterThreshold / 100) : t3Groups;
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50">
         <div className="bg-white border-b border-gray-200 sticky top-0 z-20 px-4 py-3">
           <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
             <div>
@@ -557,21 +799,14 @@ export default function App() {
                 <button onClick={() => setStep('manage')} className="text-sm text-gray-400 hover:text-gray-700">←</button>
                 <h1 className="text-lg font-bold text-gray-900">Consensus Görünümü</h1>
               </div>
-              <p className="text-xs text-gray-400">{selectedSession?.name} · {t2Codings.length} altmod · {t3Groups.length} grup · {t3Groups.reduce((s, g) => s + g.items.length, 0)} madde</p>
+              <p className="text-xs text-gray-400">{selectedSession?.name} · {t2Codings.length} altmod · {t3Groups.length} grup</p>
             </div>
             <div className="flex items-center gap-3">
-              {/* View toggle */}
               <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                <button
-                  onClick={() => setViewMode('grid')}
-                  className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition', viewMode === 'grid' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}
-                >
+                <button onClick={() => setViewMode('grid')} className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition', viewMode === 'grid' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}>
                   <LayoutGrid size={13} /> Matris
                 </button>
-                <button
-                  onClick={() => setViewMode('list')}
-                  className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition border-l border-gray-200', viewMode === 'list' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}
-                >
+                <button onClick={() => setViewMode('list')} className={cn('flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition border-l border-gray-200', viewMode === 'list' ? 'bg-violet-600 text-white' : 'text-gray-500 hover:bg-gray-50')}>
                   <LayoutList size={13} /> Liste
                 </button>
               </div>
@@ -585,9 +820,7 @@ export default function App() {
             </div>
           </div>
         </div>
-
         <div className="max-w-5xl mx-auto p-4 space-y-4">
-          {/* Stats */}
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
               <div className="text-2xl font-bold text-gray-900">{t2Codings.length}</div>
@@ -602,37 +835,20 @@ export default function App() {
               <div className="text-xs text-gray-400">≥%50 Consensus</div>
             </div>
           </div>
-
-          {/* Groups — Matrix or List */}
           {viewMode === 'grid' ? (
             <ConsensusGrid groups={filtered} codings={t2Codings} />
           ) : (
             <div className="space-y-3">
-              {filtered.map(g => (
-                <T3GroupPanel key={g.id} group={g} totalMods={t2Codings.length} onUpdateNotes={() => {}} />
-              ))}
-              {filtered.length === 0 && (
-                <div className="text-center py-12 text-gray-400">
-                  <p>Eşik değerini düşürün veya T2 verisi yükleyin.</p>
-                </div>
-              )}
+              {filtered.map(g => <T3GroupPanel key={g.id} group={g} totalMods={t2Codings.length} />)}
+              {filtered.length === 0 && <div className="text-center py-12 text-gray-400"><p>Eşik değerini düşürün veya T2 verisi yükleyin.</p></div>}
             </div>
           )}
-
-          {/* Discussion notes */}
           <div className="bg-white rounded-2xl border border-gray-200 p-5">
             <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
               <MessageSquare size={16} className="text-emerald-600" /> Tartışma Notları
             </h3>
-            <textarea
-              className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-none"
-              rows={5}
-              placeholder="Açık tartışma notları, kararlar, gerekçeler..."
-              value={discussionNotes}
-              onChange={e => setDiscussionNotes(e.target.value)}
-            />
+            <textarea className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-none" rows={5} placeholder="Açık tartışma notları, kararlar, gerekçeler..." value={discussionNotes} onChange={e => setDiscussionNotes(e.target.value)} />
           </div>
-
           <button onClick={handleSaveT3} disabled={loading || t3Groups.length === 0} className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition">
             {loading ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />} Kaydet & Tamamla
           </button>
@@ -646,9 +862,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50 flex items-center justify-center p-4">
       <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-2xl shadow-xl p-10 w-full max-w-md text-center">
-        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <CheckCircle size={32} className="text-green-600" />
-        </div>
+        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle size={32} className="text-green-600" /></div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Tamamlandı!</h2>
         <p className="text-gray-500 text-sm">T3 sonuçları kaydedildi ve indirildi.</p>
         <button onClick={() => { setStep('sessions'); setSelectedSession(null); setT2Codings([]); setT3Groups([]); setDiscussionNotes(''); }} className="mt-6 text-sm text-emerald-600 hover:underline">Başka oturuma geç</button>
