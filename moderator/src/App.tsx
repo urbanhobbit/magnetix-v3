@@ -1005,38 +1005,66 @@ export default function App() {
 
   // ── CSV Import (T2 kodlama board için) ────────────────────────────────────
 
+  const parseCsvText = (raw: string) => {
+    // Normalize line endings, strip BOM
+    const text = raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = text.split('\n').filter(l => l.trim().length > 0);
+    if (lines.length < 2) return null;
+    // Parse one CSV line respecting quoted fields
+    const parseLine = (line: string): string[] => {
+      // Handle lines where the entire row is wrapped in outer quotes: "a,b,c,d"
+      const trimmed = line.trim();
+      if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+        // Check if it's a single outer-quoted row (no unescaped inner quotes wrapping individual cells)
+        const inner = trimmed.slice(1, -1);
+        // If inner content has no double-double-quotes, it's a whole-row quoted line
+        if (!inner.includes('""')) {
+          return inner.split(',').map(c => c.trim());
+        }
+      }
+      const row: string[] = [];
+      let cur = ''; let inq = false;
+      for (let i = 0; i < trimmed.length; i++) {
+        const ch = trimmed[i];
+        if (ch === '"') {
+          if (inq && trimmed[i + 1] === '"') { cur += '"'; i++; } // escaped quote
+          else { inq = !inq; }
+        } else if (ch === ',' && !inq) { row.push(cur.trim()); cur = ''; }
+        else { cur += ch; }
+      }
+      row.push(cur.trim());
+      return row;
+    };
+    const header = parseLine(lines[0]).map(h => h.replace(/"/g, '').toLowerCase().trim());
+    return { header, lines: lines.slice(1), parseLine };
+  };
+
   const handleCsvImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return;
     e.target.value = '';
     const reader = new FileReader();
     reader.onload = ev => {
       try {
-        const text = (ev.target?.result as string).replace(/^\uFEFF/, '');
-        const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-        if (lines.length < 2) { alert('CSV boş veya geçersiz.'); return; }
-        const header = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
+        const parsed = parseCsvText(ev.target?.result as string);
+        if (!parsed) { alert('CSV boş veya geçersiz.'); return; }
+        const { header, lines, parseLine } = parsed;
         const colIdx = { grup: header.indexOf('grup_adi'), madde: header.indexOf('madde_metni'), uzman: header.indexOf('uzman_adi'), kat: header.indexOf('kategori') };
-        if (colIdx.grup < 0 || colIdx.madde < 0) { alert('CSV başlık satırı eksik: grup_adi ve madde_metni zorunlu.'); return; }
-        const parseCell = (row: string[], i: number) => i >= 0 ? (row[i] ?? '').replace(/^"|"$/g, '').replace(/""/g, '"').trim() : '';
+        if (colIdx.grup < 0 || colIdx.madde < 0) { alert(`CSV başlık satırı eksik.\nBulunan başlıklar: ${header.join(', ')}\nGerekli: grup_adi, madde_metni`); return; }
+        const getCell = (row: string[], i: number) => i >= 0 ? (row[i] ?? '').replace(/^"|"$/g, '').trim() : '';
         const groupMap = new Map<string, T2Group>();
-        for (let li = 1; li < lines.length; li++) {
-          // Simple CSV parse respecting quoted commas
-          const row: string[] = [];
-          let cur = ''; let inq = false;
-          for (const ch of lines[li] + ',') {
-            if (ch === '"') { inq = !inq; } else if (ch === ',' && !inq) { row.push(cur); cur = ''; } else { cur += ch; }
-          }
-          const grupAdi = parseCell(row, colIdx.grup);
-          const madde = parseCell(row, colIdx.madde);
+        for (let li = 0; li < lines.length; li++) {
+          const row = parseLine(lines[li]);
+          const grupAdi = getCell(row, colIdx.grup);
+          const madde = getCell(row, colIdx.madde);
           if (!grupAdi || !madde) continue;
-          const uzman = parseCell(row, colIdx.uzman) || modName;
-          const kat = parseCell(row, colIdx.kat) || 'İçe Aktarılan';
+          const uzman = getCell(row, colIdx.uzman) || modName;
+          const kat = getCell(row, colIdx.kat) || 'İçe Aktarılan';
           if (!groupMap.has(grupAdi)) {
             groupMap.set(grupAdi, { id: `grp_csv_${Date.now()}_${groupMap.size}`, name: grupAdi, category: kat, items: [] });
           }
           groupMap.get(grupAdi)!.items.push({ id: `item_csv_${Date.now()}_${li}`, text: madde, originalText: madde, expertName: uzman, category: kat, group: grupAdi });
         }
-        if (groupMap.size === 0) { alert('CSV\'den hiçbir madde alınamadı.'); return; }
+        if (groupMap.size === 0) { alert('CSV\'den hiçbir madde alınamadı.\nDosyanın grup_adi ve madde_metni sütunlarında veri olduğundan emin ol.'); return; }
         setCodeGroups(Array.from(groupMap.values()));
         setUnassigned([]);
         setStep('code');
