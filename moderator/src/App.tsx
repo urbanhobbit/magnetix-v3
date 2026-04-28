@@ -712,11 +712,11 @@ export default function App() {
   const [showT3NewGroup, setShowT3NewGroup] = useState(false);
   const [t3NewGroupName, setT3NewGroupName] = useState('');
   const [reviewTab, setReviewTab] = useState<'consensus' | 'edit'>('consensus');
-  const [aiModel, setAiModel] = useState<'deepseek/deepseek-r1-0528-qwen3-8b' | 'google/gemini-flash-1.5-8b'>('deepseek/deepseek-r1-0528-qwen3-8b');
+  const [aiModel, setAiModel] = useState<'deepseek/deepseek-v4-flash' | 'google/gemini-3.1-flash-lite-preview'>('deepseek/deepseek-v4-flash');
 
   const AI_MODELS = [
-    { value: 'deepseek/deepseek-r1-0528-qwen3-8b', label: 'DeepSeek R1 (Hızlı)' },
-    { value: 'google/gemini-flash-1.5-8b', label: 'Gemini Flash 1.5' },
+    { value: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+    { value: 'google/gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite' },
   ] as const;
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
