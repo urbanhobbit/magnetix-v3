@@ -712,6 +712,12 @@ export default function App() {
   const [showT3NewGroup, setShowT3NewGroup] = useState(false);
   const [t3NewGroupName, setT3NewGroupName] = useState('');
   const [reviewTab, setReviewTab] = useState<'consensus' | 'edit'>('consensus');
+  const [aiModel, setAiModel] = useState<'deepseek/deepseek-r1-0528-qwen3-8b' | 'google/gemini-flash-1.5-8b'>('deepseek/deepseek-r1-0528-qwen3-8b');
+
+  const AI_MODELS = [
+    { value: 'deepseek/deepseek-r1-0528-qwen3-8b', label: 'DeepSeek R1 (Hızlı)' },
+    { value: 'google/gemini-flash-1.5-8b', label: 'Gemini Flash 1.5' },
+  ] as const;
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const offlineImportRef = useRef<HTMLInputElement>(null);
@@ -945,20 +951,28 @@ export default function App() {
   // ── YZ Kodlama ────────────────────────────────────────────────────────────
 
   const handleAiCode = async () => {
-    const apiKey = import.meta.env.VITE_OPENAI_API_KEY as string | undefined;
-    if (!apiKey) { alert('VITE_OPENAI_API_KEY tanımlı değil. Vercel ortam değişkenlerini kontrol et.'); return; }
+    const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY as string | undefined;
+    if (!apiKey) { alert('VITE_OPENROUTER_API_KEY tanımlı değil.\nVercel → Settings → Environment Variables altına ekle.'); return; }
     if (l1Notes.length === 0) { alert('Önce L1 notlarını yükle.'); return; }
     setLoading(true);
     try {
       const noteTexts = l1Notes.map(n => `[${n.expertName}]: ${n.text}`).join('\n---\n');
       const systemPrompt = `Sen bir niteliksel araştırma uzmanısın. Verilen uzman notlarını analiz et ve anlamlı temalara göre grupla. Her grup için JSON çıktısı üret. Yanıtını YALNIZCA geçerli JSON olarak döndür, başka açıklama ekleme.`;
       const userPrompt = `Aşağıdaki uzman notlarını analiz et ve gruplara ayır. Her maddeyi tek bir gruba ata. Gruplar Türkçe ve anlamlı olmalı.\n\nNotlar:\n${noteTexts}\n\nÇıktı formatı (JSON array):\n[\n  {\n    "name": "Grup Adı",\n    "category": "Kategori",\n    "items": [\n      { "text": "madde metni", "expertName": "uzman adı" }\n    ]\n  }\n]`;
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: 'gpt-4o', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], temperature: 0.3 }),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': window.location.origin,
+          'X-Title': 'MagnetiX Moderator',
+        },
+        body: JSON.stringify({ model: aiModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], temperature: 0.3 }),
       });
-      if (!res.ok) throw new Error(`OpenAI API hatası: ${res.status}`);
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(`OpenRouter API hatası: ${res.status} — ${errBody}`);
+      }
       const json = await res.json();
       const raw = json.choices?.[0]?.message?.content ?? '';
       const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -1279,6 +1293,9 @@ export default function App() {
             <button onClick={() => setShowNewGroup(s => !s)} className="flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition">
               <FolderPlus size={14} /> Yeni Grup
             </button>
+            <select value={aiModel} onChange={e => setAiModel(e.target.value as typeof aiModel)} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-2 text-xs font-medium text-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-400">
+              {AI_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
             <button onClick={handleAiCode} disabled={loading} className="flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-50 transition">
               {loading ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />} YZ ile Kodla
             </button>
