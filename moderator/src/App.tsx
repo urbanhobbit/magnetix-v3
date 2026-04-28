@@ -11,7 +11,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   LogIn, Upload, Download, RefreshCw, CheckCircle, Users,
   Save, Plus, ChevronDown, ChevronRight, MessageSquare, BarChart2,
-  LayoutList, LayoutGrid, FolderPlus, GripVertical, Pencil, Check, X, Trash2, FileText,
+  LayoutList, LayoutGrid, FolderPlus, GripVertical, Pencil, Check, X, Trash2, FileText, Sparkles,
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import type {
@@ -716,6 +716,7 @@ export default function App() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const offlineImportRef = useRef<HTMLInputElement>(null);
   const t2FileRef = useRef<HTMLInputElement>(null);
+  const csvImportRef = useRef<HTMLInputElement>(null);
 
   const refreshSessions = async () => {
     setLoading(true);
@@ -941,6 +942,149 @@ export default function App() {
     setLoading(false);
   };
 
+  // ── YZ Kodlama ────────────────────────────────────────────────────────────
+
+  const handleAiCode = async () => {
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY as string | undefined;
+    if (!apiKey) { alert('VITE_OPENAI_API_KEY tanımlı değil. Vercel ortam değişkenlerini kontrol et.'); return; }
+    if (l1Notes.length === 0) { alert('Önce L1 notlarını yükle.'); return; }
+    setLoading(true);
+    try {
+      const noteTexts = l1Notes.map(n => `[${n.expertName}]: ${n.text}`).join('\n---\n');
+      const systemPrompt = `Sen bir niteliksel araştırma uzmanısın. Verilen uzman notlarını analiz et ve anlamlı temalara göre grupla. Her grup için JSON çıktısı üret. Yanıtını YALNIZCA geçerli JSON olarak döndür, başka açıklama ekleme.`;
+      const userPrompt = `Aşağıdaki uzman notlarını analiz et ve gruplara ayır. Her maddeyi tek bir gruba ata. Gruplar Türkçe ve anlamlı olmalı.\n\nNotlar:\n${noteTexts}\n\nÇıktı formatı (JSON array):\n[\n  {\n    "name": "Grup Adı",\n    "category": "Kategori",\n    "items": [\n      { "text": "madde metni", "expertName": "uzman adı" }\n    ]\n  }\n]`;
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: 'gpt-4o', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], temperature: 0.3 }),
+      });
+      if (!res.ok) throw new Error(`OpenAI API hatası: ${res.status}`);
+      const json = await res.json();
+      const raw = json.choices?.[0]?.message?.content ?? '';
+      const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const parsed = JSON.parse(cleaned) as { name: string; category: string; items: { text: string; expertName: string }[] }[];
+      const groups: T2Group[] = parsed.map((g, gi) => ({
+        id: `group_ai_${Date.now()}_${gi}`,
+        name: g.name,
+        category: g.category || 'YZ Kodlama',
+        items: g.items.map((it, ii) => ({
+          id: `item_ai_${Date.now()}_${gi}_${ii}`,
+          text: it.text,
+          originalText: it.text,
+          expertName: it.expertName || modName,
+          category: g.category || 'YZ Kodlama',
+          group: g.name,
+        })),
+      }));
+      setCodeGroups(groups);
+      setUnassigned([]);
+      setStep('code');
+    } catch (e) {
+      console.error(e);
+      alert(`YZ kodlama hatası: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setLoading(false);
+  };
+
+  // ── CSV Export ────────────────────────────────────────────────────────────
+
+  const exportCsv = (groups: { name: string; category?: string; items: { text: string; expertName?: string; expertNames?: string[] }[] }[], filename: string) => {
+    const rows = [['grup_adi', 'madde_metni', 'uzman_adi', 'kategori']];
+    for (const g of groups) {
+      for (const item of g.items) {
+        const uzman = item.expertName ?? (item.expertNames?.[0] ?? '');
+        rows.push([g.name, item.text, uzman, g.category ?? 'T3'].map(v => `"${String(v).replace(/"/g, '""')}"`));
+      }
+    }
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ── CSV Import (T2 kodlama board için) ────────────────────────────────────
+
+  const handleCsvImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const text = (ev.target?.result as string).replace(/^\uFEFF/, '');
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length < 2) { alert('CSV boş veya geçersiz.'); return; }
+        const header = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
+        const colIdx = { grup: header.indexOf('grup_adi'), madde: header.indexOf('madde_metni'), uzman: header.indexOf('uzman_adi'), kat: header.indexOf('kategori') };
+        if (colIdx.grup < 0 || colIdx.madde < 0) { alert('CSV başlık satırı eksik: grup_adi ve madde_metni zorunlu.'); return; }
+        const parseCell = (row: string[], i: number) => i >= 0 ? (row[i] ?? '').replace(/^"|"$/g, '').replace(/""/g, '"').trim() : '';
+        const groupMap = new Map<string, T2Group>();
+        for (let li = 1; li < lines.length; li++) {
+          // Simple CSV parse respecting quoted commas
+          const row: string[] = [];
+          let cur = ''; let inq = false;
+          for (const ch of lines[li] + ',') {
+            if (ch === '"') { inq = !inq; } else if (ch === ',' && !inq) { row.push(cur); cur = ''; } else { cur += ch; }
+          }
+          const grupAdi = parseCell(row, colIdx.grup);
+          const madde = parseCell(row, colIdx.madde);
+          if (!grupAdi || !madde) continue;
+          const uzman = parseCell(row, colIdx.uzman) || modName;
+          const kat = parseCell(row, colIdx.kat) || 'İçe Aktarılan';
+          if (!groupMap.has(grupAdi)) {
+            groupMap.set(grupAdi, { id: `grp_csv_${Date.now()}_${groupMap.size}`, name: grupAdi, category: kat, items: [] });
+          }
+          groupMap.get(grupAdi)!.items.push({ id: `item_csv_${Date.now()}_${li}`, text: madde, originalText: madde, expertName: uzman, category: kat, group: grupAdi });
+        }
+        if (groupMap.size === 0) { alert('CSV\'den hiçbir madde alınamadı.'); return; }
+        setCodeGroups(Array.from(groupMap.values()));
+        setUnassigned([]);
+        setStep('code');
+      } catch (err) { alert('CSV parse hatası: ' + String(err)); }
+    };
+    reader.readAsText(f, 'UTF-8');
+  };
+
+  // ── T3 CSV Import (review step için) ─────────────────────────────────────
+
+  const t3CsvImportRef = useRef<HTMLInputElement>(null);
+
+  const handleT3CsvImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const text = (ev.target?.result as string).replace(/^\uFEFF/, '');
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length < 2) { alert('CSV boş veya geçersiz.'); return; }
+        const header = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
+        const colIdx = { grup: header.indexOf('grup_adi'), madde: header.indexOf('madde_metni'), uzman: header.indexOf('uzman_adi'), kat: header.indexOf('kategori') };
+        if (colIdx.grup < 0 || colIdx.madde < 0) { alert('CSV başlık satırı eksik.'); return; }
+        const parseCell = (row: string[], i: number) => i >= 0 ? (row[i] ?? '').replace(/^"|"$/g, '').replace(/""/g, '"').trim() : '';
+        const groupMap = new Map<string, T3Group>();
+        for (let li = 1; li < lines.length; li++) {
+          const row: string[] = [];
+          let cur = ''; let inq = false;
+          for (const ch of lines[li] + ',') {
+            if (ch === '"') { inq = !inq; } else if (ch === ',' && !inq) { row.push(cur); cur = ''; } else { cur += ch; }
+          }
+          const grupAdi = parseCell(row, colIdx.grup);
+          const madde = parseCell(row, colIdx.madde);
+          if (!grupAdi || !madde) continue;
+          const uzman = parseCell(row, colIdx.uzman) || modName;
+          if (!groupMap.has(grupAdi)) {
+            groupMap.set(grupAdi, { id: `t3grp_csv_${Date.now()}_${groupMap.size}`, name: grupAdi, category: 'İçe Aktarılan', consensusScore: 0, items: [] });
+          }
+          groupMap.get(grupAdi)!.items.push({ id: `t3item_csv_${Date.now()}_${li}`, text: madde, expertNames: [uzman], subModSources: [], consensusScore: 0 });
+        }
+        if (groupMap.size === 0) { alert('CSV\'den hiçbir madde alınamadı.'); return; }
+        setT3Groups(Array.from(groupMap.values()));
+      } catch (err) { alert('CSV parse hatası: ' + String(err)); }
+    };
+    reader.readAsText(f, 'UTF-8');
+  };
+
   // ── Login ─────────────────────────────────────────────────────────────────
 
   if (step === 'login') {
@@ -1107,8 +1251,18 @@ export default function App() {
             <button onClick={() => setShowNewGroup(s => !s)} className="flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition">
               <FolderPlus size={14} /> Yeni Grup
             </button>
+            <button onClick={handleAiCode} disabled={loading} className="flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-50 transition">
+              {loading ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />} YZ ile Kodla
+            </button>
+            <button onClick={() => exportCsv(codeGroups, `t2_kodlama_${selectedSession?.id ?? 'export'}.csv`)} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition">
+              <Download size={13} /> CSV İndir
+            </button>
+            <button onClick={() => csvImportRef.current?.click()} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition">
+              <Upload size={13} /> CSV Yükle
+            </button>
+            <input ref={csvImportRef} type="file" accept=".csv" className="hidden" onChange={handleCsvImport} />
             <button onClick={() => handleSaveModeratorT2(true)} disabled={loading} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition">
-              <Download size={13} /> Offline Export
+              <Download size={13} /> JSON Export
             </button>
             <button onClick={() => handleSaveModeratorT2(false)} disabled={loading} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition">
               {loading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Kaydet & Yayınla
@@ -1186,6 +1340,13 @@ export default function App() {
                   <Pencil size={13} /> T3 Düzenle
                 </button>
               </div>
+              <button onClick={() => exportCsv(t3Groups, `t3_kodlama_${selectedSession?.id ?? 'export'}.csv`)} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition">
+                <Download size={13} /> CSV İndir
+              </button>
+              <button onClick={() => t3CsvImportRef.current?.click()} className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 transition">
+                <Upload size={13} /> CSV Yükle
+              </button>
+              <input ref={t3CsvImportRef} type="file" accept=".csv" className="hidden" onChange={handleT3CsvImport} />
               <button onClick={handleSaveT3} disabled={loading || t3Groups.length === 0} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition">
                 {loading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Kaydet & Tamamla
               </button>
