@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { LogIn, Send, CheckCircle, RefreshCw, Users } from 'lucide-react';
-import { cn } from './lib/utils';
-import { createSession, listSessions, saveL1Note } from '@shared/firestoreService';
+import { LogIn, Send, CheckCircle, RefreshCw, Users, Save } from 'lucide-react';
+import { listSessions, saveL1Note } from '@shared/firestoreService';
 import type { Session } from '@shared/types';
 
 export default function App() {
@@ -13,7 +12,9 @@ export default function App() {
   const [sessionName, setSessionName] = useState('');
   const [noteText, setNoteText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [saveLoading, setSaveLoading] = useState(false);
   const [error, setError] = useState('');
+  const [savedDraft, setSavedDraft] = useState(false);
 
   useEffect(() => {
     if (step === 'session') {
@@ -31,28 +32,41 @@ export default function App() {
   const handleSelectSession = (s: Session) => {
     setSessionId(s.id);
     setSessionName(s.name);
+    // localStorage'dan taslak yükle
+    const draftKey = `draft_${s.id}_${expertName.replace(/\s+/g, '_')}`;
+    const draft = localStorage.getItem(draftKey);
+    if (draft) setNoteText(draft);
     setStep('write');
   };
 
-  const handleSubmit = async () => {
+  const persistNote = async (andFinish: boolean) => {
     if (!noteText.trim()) return;
-    setLoading(true);
+    andFinish ? setLoading(true) : setSaveLoading(true);
     setError('');
+    const draftKey = `draft_${sessionId}_${expertName.replace(/\s+/g, '_')}`;
     try {
       await saveL1Note(sessionId, expertName, noteText.trim());
-      setStep('done');
+      localStorage.removeItem(draftKey);
+      if (andFinish) setStep('done');
+      else setSavedDraft(true);
     } catch (e) {
       console.error(e);
       // Fallback: localStorage
-      try {
-        const key = `l1_${sessionId}_${expertName.replace(/\s+/g, '_')}`;
-        localStorage.setItem(key, JSON.stringify({ expertName, text: noteText.trim(), timestamp: new Date().toISOString() }));
-        setStep('done');
-      } catch {
-        setError('Kaydedilemedi. Lütfen tekrar deneyin.');
+      localStorage.setItem(draftKey, noteText.trim());
+      if (andFinish) {
+        try {
+          const key = `l1_${sessionId}_${expertName.replace(/\s+/g, '_')}`;
+          localStorage.setItem(key, JSON.stringify({ expertName, text: noteText.trim(), timestamp: new Date().toISOString() }));
+          setStep('done');
+        } catch {
+          setError('Kaydedilemedi. Lütfen tekrar deneyin.');
+        }
+      } else {
+        setSavedDraft(true); // taslak localStorage'a yazıldı
       }
     } finally {
       setLoading(false);
+      setSaveLoading(false);
     }
   };
 
@@ -153,14 +167,14 @@ export default function App() {
           animate={{ opacity: 1, y: 0 }}
           className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-2xl"
         >
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-xl font-bold text-gray-900">Çocukların İhtiyaçları</h2>
-              <p className="text-sm text-gray-500 mt-0.5">Oturum: <span className="font-medium">{sessionName}</span> · Uzman: <span className="font-medium text-blue-700">{expertName}</span></p>
-            </div>
+          <div className="mb-6">
+            <h2 className="text-xl font-bold text-gray-900">Çocukların İhtiyaçları</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Oturum: <span className="font-medium">{sessionName}</span> · Uzman: <span className="font-medium text-blue-700">{expertName}</span>
+            </p>
           </div>
 
-          <div className="mb-2">
+          <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Çocukların ihtiyaçlarını yazın
             </label>
@@ -170,23 +184,37 @@ export default function App() {
               rows={12}
               placeholder="Örnek:&#10;- Psikolojik danışmanlık hizmeti&#10;- Okul öncesi eğitime erişim&#10;- Güvenli oyun alanları&#10;..."
               value={noteText}
-              onChange={e => setNoteText(e.target.value)}
+              onChange={e => { setNoteText(e.target.value); setSavedDraft(false); }}
               autoFocus
             />
           </div>
 
-          {error && (
-            <p className="text-sm text-red-500 mb-3">{error}</p>
+          {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
+
+          {savedDraft && (
+            <p className="text-xs text-green-600 mb-3 flex items-center gap-1">
+              <CheckCircle size={12} /> Taslak kaydedildi — istediğinizde düzenleyip gönderebilirsiniz.
+            </p>
           )}
 
-          <button
-            onClick={handleSubmit}
-            disabled={!noteText.trim() || loading}
-            className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition"
-          >
-            {loading ? <RefreshCw size={16} className="animate-spin" /> : <Send size={16} />}
-            {loading ? 'Kaydediliyor...' : 'Gönder'}
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => persistNote(false)}
+              disabled={!noteText.trim() || saveLoading || loading}
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition"
+            >
+              {saveLoading ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+              {saveLoading ? 'Kaydediliyor...' : 'Taslak Kaydet'}
+            </button>
+            <button
+              onClick={() => persistNote(true)}
+              disabled={!noteText.trim() || loading || saveLoading}
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition"
+            >
+              {loading ? <RefreshCw size={16} className="animate-spin" /> : <Send size={16} />}
+              {loading ? 'Gönderiliyor...' : 'Gönder'}
+            </button>
+          </div>
         </motion.div>
       </div>
     );
@@ -207,6 +235,12 @@ export default function App() {
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Teşekkürler!</h2>
         <p className="text-gray-500 text-sm">Görüşleriniz başarıyla kaydedildi.</p>
         <p className="text-gray-400 text-xs mt-4">Oturum: <span className="font-medium">{sessionName}</span></p>
+        <button
+          onClick={() => { setSavedDraft(false); setStep('write'); }}
+          className="mt-6 text-xs text-blue-500 hover:text-blue-700 underline"
+        >
+          Düzenleyip tekrar göndermek istiyorum
+        </button>
       </motion.div>
     </div>
   );
