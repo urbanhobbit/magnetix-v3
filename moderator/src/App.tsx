@@ -1002,6 +1002,43 @@ export default function App() {
     setLoading(false);
   };
 
+  const handleAiT3Refine = async () => {
+    const apiKey = import.meta.env.VITE_OPENROUTER_API_KEY as string | undefined;
+    if (!apiKey) { alert('VITE_OPENROUTER_API_KEY tanımlı değil.'); return; }
+    if (t3Groups.length === 0) { alert('Önce T3 grupları yükle (CSV veya consensus).'); return; }
+    setLoading(true);
+    try {
+      const groupsJson = JSON.stringify(t3Groups.map(g => ({
+        name: g.name,
+        category: g.category,
+        items: g.items.map(i => ({ id: i.id, text: i.text, expertNames: i.expertNames })),
+      })));
+      const systemPrompt = `Sen bir niteliksel araştırma uzmanısın. Verilen T3 gruplarını sadeleştir: benzer/tekrarlayan maddeleri birleştir, özgün maddeleri koru. YALNIZCA geçerli JSON döndür.`;
+      const userPrompt = `Aşağıdaki T3 gruplarını analiz et. Her grupta çok benzer veya aynı anlama gelen maddeleri tek maddeye birleştir. Birleştirilen maddenin expertNames'ini tüm kaynak maddelerin uzmanlarının birleşimi yap.\n\nGruplar:\n${groupsJson}\n\nÇıktı formatı (aynı yapıyı koru, sadece items'ı güncelle):\n[\n  {\n    "id": "...",\n    "name": "Grup Adı",\n    "category": "Kategori",\n    "consensusScore": 1,\n    "items": [\n      { "id": "...", "text": "birleştirilmiş madde", "expertNames": ["uzman1","uzman2"], "consensusScore": 1, "subModSources": [] }\n    ]\n  }\n]`;
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': window.location.origin,
+          'X-Title': 'MagnetiX Moderator',
+        },
+        body: JSON.stringify({ model: aiModel, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], temperature: 0.2 }),
+      });
+      if (!res.ok) throw new Error(`OpenRouter API hatası: ${res.status} — ${await res.text()}`);
+      const json = await res.json();
+      const raw = json.choices?.[0]?.message?.content ?? '';
+      const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const parsed = JSON.parse(cleaned) as T3Group[];
+      setT3Groups(parsed);
+      setReviewTab('edit');
+    } catch (e) {
+      console.error(e);
+      alert(`YZ sadeleştirme hatası: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    setLoading(false);
+  };
+
   // ── CSV Export ────────────────────────────────────────────────────────────
 
   const exportCsv = (groups: { name: string; category?: string; items: { text: string; expertName?: string; expertNames?: string[] }[] }[], filename: string) => {
@@ -1424,6 +1461,16 @@ export default function App() {
                 <Upload size={13} /> CSV Yükle
               </button>
               <input ref={t3CsvImportRef} type="file" accept=".csv" className="hidden" onChange={handleT3CsvImport} />
+              {workshopMode && (
+                <>
+                  <select value={aiModel} onChange={e => setAiModel(e.target.value as typeof aiModel)} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-2 text-xs font-medium text-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-400">
+                    {AI_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                  </select>
+                  <button onClick={handleAiT3Refine} disabled={loading || t3Groups.length === 0} className="flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-50 transition">
+                    {loading ? <RefreshCw size={13} className="animate-spin" /> : <Sparkles size={13} />} YZ Sadeleştir
+                  </button>
+                </>
+              )}
               <button onClick={handleSaveT3} disabled={loading || t3Groups.length === 0} className="flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 transition">
                 {loading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />} Kaydet & Tamamla
               </button>
