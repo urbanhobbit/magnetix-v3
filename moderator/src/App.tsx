@@ -713,6 +713,7 @@ export default function App() {
   const [t3NewGroupName, setT3NewGroupName] = useState('');
   const [reviewTab, setReviewTab] = useState<'consensus' | 'edit'>('consensus');
   const [aiModel, setAiModel] = useState<'deepseek/deepseek-v4-flash' | 'google/gemini-3.1-flash-lite-preview'>('deepseek/deepseek-v4-flash');
+  const [workshopMode, setWorkshopMode] = useState(false);
 
   const AI_MODELS = [
     { value: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
@@ -918,9 +919,10 @@ export default function App() {
   const handleSaveT3 = async () => {
     if (!selectedSession || t3Groups.length === 0) return;
     setLoading(true);
+    const t3Collection = workshopMode ? 't3_workshop_v3' : 't3_final_v3';
     const final: T3Final = { sessionId: selectedSession.id, moderatorName: modName, savedAt: new Date().toISOString(), groups: t3Groups, notes: discussionNotes };
     try {
-      await saveT3Final(final);
+      await saveT3Final(final, t3Collection);
       await updateSessionStatus(selectedSession.id, 'done');
     } catch (e) {
       console.error(e);
@@ -1161,7 +1163,19 @@ export default function App() {
                 <h2 className="text-xl font-bold text-gray-900">Oturumlar</h2>
                 <p className="text-sm text-gray-500">Moderatör: <span className="font-medium text-emerald-700">{modName}</span></p>
               </div>
-              <button onClick={refreshSessions} className="p-2 text-gray-400 hover:text-gray-700"><RefreshCw size={16} /></button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setWorkshopMode(m => !m)}
+                  title="Çalıştay modunda T3 t3_workshop_v3 koleksiyonuna kaydedilir"
+                  className={cn('flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition', workshopMode ? 'bg-amber-100 border-amber-400 text-amber-800' : 'bg-gray-100 border-gray-300 text-gray-500 hover:bg-amber-50 hover:border-amber-300')}
+                >
+                  🏕️ Çalıştay
+                  <span className={cn('w-6 h-3 rounded-full flex items-center transition-colors', workshopMode ? 'bg-amber-400' : 'bg-gray-300')}>
+                    <span className={cn('w-2.5 h-2.5 rounded-full bg-white shadow transition-transform mx-0.5', workshopMode ? 'translate-x-3' : 'translate-x-0')} />
+                  </span>
+                </button>
+                <button onClick={refreshSessions} className="p-2 text-gray-400 hover:text-gray-700"><RefreshCw size={16} /></button>
+              </div>
             </div>
             <div className="flex gap-2 mb-4">
               <input className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="Yeni oturum adı..." value={newSessionName} onChange={e => setNewSessionName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCreateSession()} />
@@ -1315,6 +1329,12 @@ export default function App() {
           </div>
         </div>
 
+        {workshopMode && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex items-center gap-2 text-xs text-amber-800 font-semibold">
+            🏕️ Çalıştay Modu — T3 kaydı <code className="bg-amber-100 rounded px-1 font-mono">t3_workshop_v3</code> koleksiyonuna yazılacak
+          </div>
+        )}
+
         {/* New group input */}
         <AnimatePresence>
           {showNewGroup && (
@@ -1398,6 +1418,12 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {workshopMode && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex items-center gap-2 text-xs text-amber-800 font-semibold">
+            🏕️ Çalıştay Modu — T3 kaydı <code className="bg-amber-100 rounded px-1 font-mono">t3_workshop_v3</code> koleksiyonuna yazılacak
+          </div>
+        )}
 
         <div className="max-w-5xl mx-auto p-4 space-y-4">
           {/* Stats */}

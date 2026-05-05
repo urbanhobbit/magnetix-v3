@@ -80,11 +80,11 @@ export async function getT2Codings(sessionId: string): Promise<T2Coding[]> {
 
 // ─── T3 Final (Moderator consensus sonucu) ────────────────────────────────────
 
-export async function saveT3Final(final: T3Final): Promise<void> {
-  await setDoc(doc(db, 't3_final_v3', final.sessionId), final);
+export async function saveT3Final(final: T3Final, collection = 't3_final_v3'): Promise<void> {
+  await setDoc(doc(db, collection, final.sessionId), final);
 }
 
-export async function getT3Final(sessionId: string): Promise<T3Final | null> {
-  const snap = await getDoc(doc(db, 't3_final_v3', sessionId));
+export async function getT3Final(sessionId: string, collection = 't3_final_v3'): Promise<T3Final | null> {
+  const snap = await getDoc(doc(db, collection, sessionId));
   return snap.exists() ? (snap.data() as T3Final) : null;
 }
