@@ -1211,9 +1211,21 @@ export default function App() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-emerald-50 p-4">
         <div className="max-w-3xl mx-auto space-y-4">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="flex items-center gap-3 mb-4">
-              <button onClick={() => setStep('sessions')} className="text-sm text-gray-400 hover:text-gray-700">← Oturumlar</button>
-              <h2 className="text-xl font-bold text-gray-900">{selectedSession?.name}</h2>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-3">
+                <button onClick={() => setStep('sessions')} className="text-sm text-gray-400 hover:text-gray-700">← Oturumlar</button>
+                <h2 className="text-xl font-bold text-gray-900">{selectedSession?.name}</h2>
+              </div>
+              <button
+                onClick={() => setWorkshopMode(m => !m)}
+                title="Çalıştay modunda T3 t3_workshop_v3 koleksiyonuna kaydedilir"
+                className={cn('flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition', workshopMode ? 'bg-amber-100 border-amber-400 text-amber-800' : 'bg-gray-100 border-gray-300 text-gray-500 hover:bg-amber-50 hover:border-amber-300')}
+              >
+                🏕️ Çalıştay
+                <span className={cn('w-6 h-3 rounded-full flex items-center transition-colors', workshopMode ? 'bg-amber-400' : 'bg-gray-300')}>
+                  <span className={cn('w-2.5 h-2.5 rounded-full bg-white shadow transition-transform mx-0.5', workshopMode ? 'translate-x-3' : 'translate-x-0')} />
+                </span>
+              </button>
             </div>
 
             {/* T1 — Uzman Notları */}
